@@ -1,257 +1,238 @@
+/**
+ * @file Platform.c
+ * @brief Exports platform-specific constants to the Affix::Platform Perl package.
+ *
+ * @details This file is responsible for providing Perl code with essential,
+ * compile-time information about the C data model and the underlying FFI
+ * library on the current platform.
+ *
+ * It exports two main categories of information:
+ * 1.  **Infix Library Info:** The version number, OS, Architecture, and ABI as
+ *     detected by the `infix.h` header. This is useful for debugging and
+ *     conditional logic in Perl.
+ * 2.  **C Type Layout:** The `sizeof` and `alignof` values for all fundamental
+ *     C types. The Perl code uses this information to correctly calculate the
+ *     size, alignment, and member offsets when generating signature strings for
+ *     complex C structs.
+ */
+
 #include "../Affix.h"
+#include <stdbool.h>
 
-#define _eval(x) #x  // extra round of macroexpansion
-#define _is_defined(x, y) strcmp(x, y)
-#define is_defined(x) _is_defined(#x, _eval(x))
+// Define ALIGNOF_ macro using the modern C11 _Alignof for consistency.
+#define ALIGNOF_(t) _Alignof(t)
 
+// Helper macro to reduce boilerplate when exporting boolean flags.
+#ifdef FFI_DEBUG_ENABLED  // Use a generic check that infix might provide
+#define EXPORT_PLATFORM_BOOL(name, macro) register_constant("Affix::Platform", name, boolSV(true))
+#else
+#define EXPORT_PLATFORM_BOOL(name, macro) register_constant("Affix::Platform", name, boolSV(false))
+#endif
+
+
+// XS Functions
+
+/**
+ * @brief (Internal) Calculates the padding needed to align an offset.
+ *
+ * @details This function is exposed to Perl as
+ *          `Affix::Platform::padding_needed_for`. It's a utility for Perl code
+ *          that might need to manually calculate struct layouts.
+ *
+ * @param offset The current offset.
+ * @param alignment The desired alignment boundary.
+ * @return The number of bytes of padding required.
+ */
 IV padding_needed_for(IV offset, IV alignment) {
-    //~ std::cerr << "padding_needed_for( " << offset << ", " << alignment << " )" << std::endl;
-    if (offset == 0)
-        return alignment;
-    if (alignment == 0)
+    if (alignment == 0) {
         return 0;
+    }
     IV misalignment = offset % alignment;
-    if (misalignment != 0)
-        return alignment - misalignment;  // round to the next multiple of alignment
-    return 0;                             // already a multiple of alignment
+    if (misalignment != 0) {
+        // Round up to the next multiple of alignment.
+        return alignment - misalignment;
+    }
+    return 0;  // Already aligned.
 }
 
 XS_INTERNAL(Affix_Platform_padding) {
     dXSARGS;
-    PERL_UNUSED_VAR(items);
+    if (items != 2) {
+        croak_xs_usage(cv, "$offset, $alignment");
+    }
     XSRETURN_IV(padding_needed_for(SvIV(ST(0)), SvIV(ST(1))));
 }
 
+
+// XS Boot Section
+
+/**
+ * @brief Initializes the Affix::Platform package and exports constants.
+ */
 void boot_Affix_Platform(pTHX_ CV * cv) {
     PERL_UNUSED_VAR(cv);
 
     (void)newXSproto_portable("Affix::Platform::padding_needed_for", Affix_Platform_padding, __FILE__, "$$");
 
-    // dyncall/dyncall_version.h
-    register_constant("Affix::Platform",
-                      "DC_Version",
-                      Perl_newSVpvf(aTHX_ "%d.%d-%7s",
-                                    (DYNCALL_VERSION >> 12),
-                                    (DYNCALL_VERSION >> 8) & 0xf,
-                                    (((DYNCALL_VERSION & 0xf) == 0xf) ? "release" : "current")));
-    register_constant("Affix::Platform", "DC_Major", newSViv(DYNCALL_VERSION >> 12));
-    register_constant("Affix::Platform", "DC_Minor", newSViv((DYNCALL_VERSION >> 8) & 0xf));
-    register_constant("Affix::Platform", "DC_Patch", newSViv((DYNCALL_VERSION >> 4) & 0xf));
+    // Infix Library Information
     register_constant(
-        "Affix::Platform", "DC_Stage", newSVpv((((DYNCALL_VERSION & 0xf) == 0xf) ? "release" : "current"), 7));
-    register_constant("Affix::Platform", "DC_RawVersion", newSViv(DYNCALL_VERSION));
+        "Affix::Platform", "INFIX_Version", Perl_newSVpvf(aTHX_ "%d.%d.%d", INFIX_MAJOR, INFIX_MINOR, INFIX_PATCH));
+    register_constant("Affix::Platform", "INFIX_Major", newSViv(INFIX_MAJOR));
+    register_constant("Affix::Platform", "INFIX_Minor", newSViv(INFIX_MINOR));
+    register_constant("Affix::Platform", "INFIX_Patch", newSViv(INFIX_PATCH));
 
-    // https://dyncall.org/pub/dyncall/dyncall/file/tip/dyncall/dyncall_macros.h
+    // Determine platform strings using infix's detection macros
     const char * os =
-#if defined DC__OS_Win64
-        "Win64"
-#elif defined DC__OS_Win32
-        "Win32"
-#elif defined DC__OS_MacOSX
-        "macOS"
-#elif defined DC__OS_IPhone
-        "iOS"
-#elif defined DC__OS_Linux
-        "Linux"
-#elif defined DC__OS_FreeBSD
-        "FreeBSD"
-#elif defined DC__OS_OpenBSD
-        "OpenBSD"
-#elif defined DC__OS_NetBSD
-        "NetBSD"
-#elif defined DC__OS_DragonFlyBSD
+#if defined(FFI_OS_LINUX)
+        "Linux";
+#elif defined(FFI_OS_WINDOWS)
+        "Windows";
+#elif defined(FFI_OS_MACOS)
+        "macOS";
+#elif defined(FFI_OS_IOS)
+        "iOS";
+#elif defined(FFI_OS_ANDROID)
+        "Android";
+#elif defined(FFI_OS_TERMUX)
+        "Termux";
+#elif defined(FFI_OS_FREEBSD)
+        "FreeBSD";
+#elif defined(FFI_OS_OPENBSD)
+        "OpenBSD";
+#elif defined(FFI_OS_NETBSD)
+        "NetBSD";
+#elif defined(FFI_OS_DRAGONFLY)
         "DragonFly BSD"
-#elif defined DC__OS_NDS
-        "Nintendo DS"
-#elif defined DC__OS_PSP
-        "PlayStation Portable"
-#elif defined DC__OS_BeOS
+#elif defined(FFI_OS_SOLARIS)
+        "Solaris"
+#elif defined(FFI_OS_HAIKU)
         "Haiku"
-#elif defined DC__OS_Plan9
-        "Plan9"
-#elif defined DC__OS_VMS
-        "VMS"
-#elif defined DC__OS_Minix
-        "Minix"
 #else
-        "Unknown"
+        "Unknown";
 #endif
-        ;
+
+    const char * architecture =
+#if defined(FFI_ARCH_X64)
+        "x86_64";
+#elif defined(FFI_ARCH_AARCH64)
+        "ARM64";
+#else
+        "Unknown";
+#endif
 
     const char * compiler =
-#if defined DC__C_Intel
-        "Intel"
-#elif defined DC__C_MSVC
-        "MSVC"
-#elif defined DC__C_CLANG
-        "Clang"
-#elif defined DC__C_GNU
-        "GNU"
-#elif defined DC__C_WATCOM
-        "Watcom"
-#elif defined DC__C_PCC
-        "ppc"
-#elif defined DC__C_SUNPRO
-        "Oracle"
+#if defined(FFI_COMPILER_CLANG)
+        "Clang";
+#elif defined(FFI_COMPILER_GCC)
+        "GCC";
+#elif defined(FFI_COMPILER_MSVC)
+        "MSVC";
 #else
-        "Unknown"
+            "Unknown";
 #endif
-        ;
-    const char * architecture =
-#if (defined(__arm64__) || defined(__arm64e__) || defined(__aarch64__)) && defined(DC__OS_MacOSX)
-        "Apple Silicon"
-#elif defined DC__Arch_AMD64
-        "x86_64"
-#elif defined DC__Arch_Intel_x86
-        "x86"
-#elif defined DC__Arch_Itanium
-        "Itanium"
-#elif defined DC__Arch_PPC64
-        "PPC64"
-#elif defined DC__Arch_PPC64
-        "PPC32"
-#elif defined DC__Arch_MIPS64
-        "MIPS64"
-#elif defined DC__Arch_MIPS
-        "MIPS"
-#elif defined DC__Arch_ARM
-        "ARM"
-#elif defined DC__Arch_ARM64
-        "ARM64"
-#elif defined DC__Arch_SuperH
-        "SuperH"  // https://en.wikipedia.org/wiki/SuperH
-#elif defined DC__Arch_Sparc64
-        "SPARC64"
-#elif defined DC__Arch_Sparc
-        "SPARC"
-#else
-        "Unknown"
-#endif
-        ;
 
-    const char * obj =
-#ifdef DC__Obj_PE
-        "PE"
-#elif defined DC__Obj_Mach
-        "Mach-O"
-#elif defined DC__Obj_ELF64
-        "64-bit ELF"
-#elif defined DC__Obj_ELF32
-        "32-bit ELF"
-#elif defined DC__Obj_ELF
-        "ELF"
+    const char * abi =
+#if defined(FFI_ABI_WINDOWS_X64)
+        "Windows x64";
+#elif defined(FFI_ABI_SYSV_X64)
+        "System V AMD64";
+#elif defined(FFI_ABI_AAPCS64)
+        "AAPCS64";
 #else
-        "Unknown"
+        "Unknown";
 #endif
-        ;
 
-    // Basics
     register_constant("Affix::Platform", "OS", newSVpv(os, 0));
-    register_constant("Affix::Platform", "Cygwin", boolSV(is_defined(DC__OS_Cygwin)));
-    register_constant("Affix::Platform", "MinGW", boolSV(is_defined(DC__OS_MinGW)));
-    register_constant("Affix::Platform", "Compiler", newSVpv(compiler, 0));
     register_constant("Affix::Platform", "Architecture", newSVpv(architecture, 0));
+    register_constant("Affix::Platform", "Compiler", newSVpv(compiler, 0));
+    register_constant("Affix::Platform", "ABI", newSVpv(abi, 0));
 
-    // Architecture types - undocumented
-    register_constant("Affix::Platform",
-                      "ARCH_Apple_Silicon",
-                      boolSV((is_defined(__arm64__) || is_defined(__arm64e__) || is_defined(__aarch64__)) &&
-                             is_defined(DC__OS_MacOSX)));
-    register_constant("Affix::Platform", "ARCH_x86_64", boolSV(is_defined(DC__Arch_AMD64)));
-    register_constant("Affix::Platform", "ARCH_x86", boolSV(is_defined(DC__Arch_Intel_x86)));
-    register_constant("Affix::Platform", "ARCH_Itanium", boolSV(is_defined(DC__Arch_Itanium)));
-    register_constant("Affix::Platform", "ARCH_PPC64", boolSV(is_defined(DC__Arch_PPC64)));
-    register_constant("Affix::Platform", "ARCH_PPC32", boolSV(is_defined(DC__Arch_PPC32)));
-    register_constant("Affix::Platform", "ARCH_MIPS64", boolSV(is_defined(DC__Arch_MIPS64)));
-    register_constant("Affix::Platform", "ARCH_MIPS", boolSV(is_defined(DC__Arch_MIPS)));
-    register_constant("Affix::Platform", "ARCH_ARM", boolSV(is_defined(DC__Arch_ARM)));
-    register_constant("Affix::Platform", "ARCH_ARM64", boolSV(is_defined(DC__Arch_ARM64)));
-    register_constant("Affix::Platform", "ARCH_SuperH", boolSV(is_defined(DC__Arch_SuperH)));
-    register_constant("Affix::Platform", "ARCH_Sparc64", boolSV(is_defined(DC__Arch_Sparc64)));
-    register_constant("Affix::Platform", "ARCH_Sparc", boolSV(is_defined(DC__Arch_Sparc)));
+    // Export boolean flags for easier checking in Perl
+    EXPORT_PLATFORM_BOOL("Linux", FFI_OS_LINUX);
+    EXPORT_PLATFORM_BOOL("Windows", FFI_OS_WINDOWS);
+    EXPORT_PLATFORM_BOOL("macOS", FFI_OS_MACOS);
+    EXPORT_PLATFORM_BOOL("iOS", FFI_OS_IOS);  // Ha!
+    EXPORT_PLATFORM_BOOL("Android", FFI_OS_ANDROID);
+    EXPORT_PLATFORM_BOOL("FreeBSD", FFI_OS_FREEBSD);
+    EXPORT_PLATFORM_BOOL("OpenBSD", FFI_OS_OPENBSD);
+    EXPORT_PLATFORM_BOOL("NetBSD", FFI_OS_NETBSD);
+    EXPORT_PLATFORM_BOOL("DragonFlyBSD", FFI_OS_DRAGONFLY);
+    EXPORT_PLATFORM_BOOL("Solaris", FFI_OS_SOLARIS);
+    EXPORT_PLATFORM_BOOL("Haiku", FFI_OS_HAIKU);
 
-    // Architecture
-    register_constant("Affix::Platform", "ARM_Thumb", boolSV(is_defined(DC__Arch_ARM_THUMB)));
-    register_constant("Affix::Platform", "ARM_EABI", boolSV(is_defined(DC__ABI_ARM_EABI)));
-    register_constant("Affix::Platform", "ARM_OABI", boolSV(is_defined(DC__ABI_ARM_OABI)));
-    register_constant("Affix::Platform", "MIPS_O32", boolSV(is_defined(DC__ABI_MIPS_O32)));
-    register_constant("Affix::Platform", "MIPS_N64", boolSV(is_defined(DC__ABI_MIPS_N64)));
-    register_constant("Affix::Platform", "MIPS_N32", boolSV(is_defined(DC__ABI_MIPS_N32)));
-    register_constant("Affix::Platform", "MIPS_EABI", boolSV(is_defined(DC__ABI_MIPS_EABI)));
+    // 64bit
+    EXPORT_PLATFORM_BOOL("ARCH_x86_64", FFI_ARCH_X64);
+    EXPORT_PLATFORM_BOOL("ARCH_ARM64", FFI_ARCH_AARCH64);
+    // 32bit (no support... yet?)
+    EXPORT_PLATFORM_BOOL("ARCH_x86", FFI_ARCH_X86);
+    EXPORT_PLATFORM_BOOL("ARCH_ARM", FFI_ARCH_ARM);
 
-    //
-    register_constant(
-        "Affix::Platform", "HardFloat", boolSV(is_defined(DC__ABI_ARM_HF) || is_defined(DC__ABI_HARDFLOAT)));
-    register_constant("Affix::Platform", "BigEndian", boolSV(is_defined(DC__Endian_BIG)));
+    /* TODO:
+     * Application Binary Interface (ABI):
+     * - FFI_ABI_WINDOWS_X64:  Microsoft x64 Calling Convention
+     * - FFI_ABI_SYSV_X64:     System V AMD64 ABI
+     * - FFI_ABI_AAPCS64:      ARM 64-bit Procedure Call Standard
+     *
+     * Compiler:
+     * - FFI_COMPILER_MSVC:    Microsoft Visual C++
+     * - FFI_COMPILER_CLANG:   Clang
+     * - FFI_COMPILER_GCC:     GNU Compiler Collection
+     * - FFI_COMPILER_INTEL:   Intel C/C++ Compiler
+     * - FFI_COMPILER_IBM:     IBM XL C/C++
+     * - FFI_COMPILER_NFI:     Unknown compiler
+     *
+     * Environment:
+     * - FFI_ENV_POSIX:         Defined for POSIX-compliant systems (macOS, Linux, BSDs, etc.)
+     * - FFI_ENV_MSYS:         MSYS/MSYS2 build environment
+     * - FFI_ENV_CYGWIN:       Cygwin environment
+     * - FFI_ENV_MINGW:        MinGW/MinGW-w64 compilers
+     * - FFI_ENV_TERMUX:       Termux running on Android or Chrome OS
+     *
+     */
 
-    // Features
-    register_constant("Affix::Platform", "Syscall", boolSV(is_defined(DC__Feature_Syscall)));
-    register_constant("Affix::Platform", "AggrByValue", boolSV(is_defined(DC__Feature_AggrByVal)));
+    // SIZEOF Constants
+    // These are essential for the Perl side to generate correct struct signatures.
+    export_constant("Affix::Platform", "SIZEOF_BOOL", "sizeof", sizeof(bool));
+    export_constant("Affix::Platform", "SIZEOF_CHAR", "sizeof", sizeof(char));
+    export_constant("Affix::Platform", "SIZEOF_SCHAR", "sizeof", sizeof(signed char));
+    export_constant("Affix::Platform", "SIZEOF_UCHAR", "sizeof", sizeof(unsigned char));
+    export_constant("Affix::Platform", "SIZEOF_WCHAR", "sizeof", sizeof(wchar_t));
+    export_constant("Affix::Platform", "SIZEOF_SHORT", "sizeof", sizeof(short));
+    export_constant("Affix::Platform", "SIZEOF_USHORT", "sizeof", sizeof(unsigned short));
+    export_constant("Affix::Platform", "SIZEOF_INT", "sizeof", sizeof(int));
+    export_constant("Affix::Platform", "SIZEOF_UINT", "sizeof", sizeof(unsigned int));
+    export_constant("Affix::Platform", "SIZEOF_LONG", "sizeof", sizeof(long));
+    export_constant("Affix::Platform", "SIZEOF_ULONG", "sizeof", sizeof(unsigned long));
+    export_constant("Affix::Platform", "SIZEOF_LONGLONG", "sizeof", sizeof(long long));
+    export_constant("Affix::Platform", "SIZEOF_ULONGLONG", "sizeof", sizeof(unsigned long long));
+    export_constant("Affix::Platform", "SIZEOF_FLOAT", "sizeof", sizeof(float));
+    export_constant("Affix::Platform", "SIZEOF_DOUBLE", "sizeof", sizeof(double));
+    export_constant("Affix::Platform", "SIZEOF_LONG_DOUBLE", "sizeof", sizeof(long double));
+    export_constant("Affix::Platform", "SIZEOF_SIZE_T", "sizeof", sizeof(size_t));
+    export_constant("Affix::Platform", "SIZEOF_SSIZE_T", "sizeof", sizeof(ssize_t));
+    export_constant("Affix::Platform", "SIZEOF_INTPTR_T", "sizeof", sizeof(intptr_t));
+    export_constant("Affix::Platform", "SIZEOF_PTR", "sizeof", sizeof(void *));
 
-    // OBJ types
-    register_constant("Affix::Platform", "OBJ_PE", boolSV(is_defined(DC__Obj_PE)));
-    register_constant("Affix::Platform", "OBJ_Mach", boolSV(is_defined(DC__Obj_Mach)));
-    register_constant("Affix::Platform", "OBJ_ELF", boolSV(is_defined(DC__Obj_ELF)));
-    register_constant("Affix::Platform", "OBJ_ELF64", boolSV(is_defined(DC__Obj_ELF64)));
-    register_constant("Affix::Platform", "OBJ_ELF32", boolSV(is_defined(DC__Obj_ELF32)));
-    register_constant("Affix::Platform", "OBJ", newSVpv(obj, 0));
-
-    // sizeof
-    export_constant("Affix::Platform", "SIZEOF_BOOL", "sizeof", SIZEOF_BOOL);
-    export_constant("Affix::Platform", "SIZEOF_CHAR", "sizeof", SIZEOF_CHAR);
-    export_constant("Affix::Platform", "SIZEOF_SCHAR", "sizeof", SIZEOF_SCHAR);
-    export_constant("Affix::Platform", "SIZEOF_UCHAR", "sizeof", SIZEOF_UCHAR);
-    export_constant("Affix::Platform", "SIZEOF_WCHAR", "sizeof", SIZEOF_WCHAR);
-    export_constant("Affix::Platform", "SIZEOF_SHORT", "sizeof", SIZEOF_SHORT);
-    export_constant("Affix::Platform", "SIZEOF_USHORT", "sizeof", SIZEOF_USHORT);
-    export_constant("Affix::Platform", "SIZEOF_INT", "sizeof", SIZEOF_INT);
-    export_constant("Affix::Platform", "SIZEOF_UINT", "sizeof", SIZEOF_UINT);
-    export_constant("Affix::Platform", "SIZEOF_LONG", "sizeof", SIZEOF_LONG);
-    export_constant("Affix::Platform", "SIZEOF_ULONG", "sizeof", SIZEOF_ULONG);
-    export_constant("Affix::Platform", "SIZEOF_LONGLONG", "sizeof", SIZEOF_LONGLONG);
-    export_constant("Affix::Platform", "SIZEOF_ULONGLONG", "sizeof", SIZEOF_ULONGLONG);
-    export_constant("Affix::Platform", "SIZEOF_FLOAT", "sizeof", SIZEOF_FLOAT);
-    export_constant("Affix::Platform", "SIZEOF_DOUBLE", "sizeof", SIZEOF_DOUBLE);
-    export_constant("Affix::Platform", "SIZEOF_SIZE_T", "sizeof", SIZEOF_SIZE_T);
-    export_constant("Affix::Platform", "SIZEOF_SSIZE_T", "sizeof", SIZEOF_SSIZE_T);
-    export_constant("Affix::Platform", "SIZEOF_INTPTR_T", "sizeof", SIZEOF_INTPTR_T);
-
-    // to calculate offsetof and padding inside structs
-    export_constant("Affix::Platform", "BYTE_ALIGN", "all", AFFIX_ALIGNBYTES);  // platform
-    export_constant("Affix::Platform", "ALIGNOF_BOOL", "all", ALIGNOF_BOOL);
-    export_constant("Affix::Platform", "ALIGNOF_CHAR", "all", ALIGNOF_CHAR);
-    export_constant("Affix::Platform", "ALIGNOF_UCHAR", "all", ALIGNOF_UCHAR);
-    export_constant("Affix::Platform", "ALIGNOF_SCHAR", "all", ALIGNOF_SCHAR);
-    export_constant("Affix::Platform", "ALIGNOF_WCHAR", "all", ALIGNOF_WCHAR);
-    export_constant("Affix::Platform", "ALIGNOF_SHORT", "all", ALIGNOF_SHORT);
-    export_constant("Affix::Platform", "ALIGNOF_USHORT", "all", ALIGNOF_USHORT);
-    export_constant("Affix::Platform", "ALIGNOF_INT", "all", ALIGNOF_INT);
-    export_constant("Affix::Platform", "ALIGNOF_UINT", "all", ALIGNOF_UINT);
-    export_constant("Affix::Platform", "ALIGNOF_LONG", "all", ALIGNOF_LONG);
-    export_constant("Affix::Platform", "ALIGNOF_ULONG", "all", ALIGNOF_ULONG);
-    export_constant("Affix::Platform", "ALIGNOF_LONGLONG", "all", ALIGNOF_LONGLONG);
-    export_constant("Affix::Platform", "ALIGNOF_ULONGLONG", "all", ALIGNOF_ULONGLONG);
-    export_constant("Affix::Platform", "ALIGNOF_FLOAT", "all", ALIGNOF_FLOAT);
-    export_constant("Affix::Platform", "ALIGNOF_DOUBLE", "all", ALIGNOF_DOUBLE);
-    export_constant("Affix::Platform", "ALIGNOF_SIZE_T", "all", ALIGNOF_SIZE_T);
-    export_constant("Affix::Platform", "ALIGNOF_SSIZE_T", "all", ALIGNOF_SSIZE_T);
-    export_constant("Affix::Platform", "ALIGNOF_INTPTR_T", "all", ALIGNOF_INTPTR_T);
-
-    // Undocumented
-    register_constant("Affix::Platform", "Windows", boolSV(is_defined(DC__OS_Win64) || is_defined(DC__OS_Win32)));
-    register_constant("Affix::Platform", "Win64", boolSV(is_defined(DC__OS_Win64)));
-    register_constant("Affix::Platform", "Win32", boolSV(is_defined(DC__OS_Win32)));
-    register_constant("Affix::Platform", "macOS", boolSV(is_defined(DC__OS_MacOSX)));
-    register_constant("Affix::Platform", "iPhone", boolSV(is_defined(DC__OS_IPhone)));
-    register_constant("Affix::Platform", "Linux", boolSV(is_defined(DC__OS_Linux)));
-    register_constant("Affix::Platform", "FreeBSD", boolSV(is_defined(DC__OS_FreeBSD)));
-    register_constant("Affix::Platform", "OpenBSD", boolSV(is_defined(DC__OS_OpenBSD)));
-    register_constant("Affix::Platform", "NetBSD", boolSV(is_defined(DC__OS_NetBSD)));
-    register_constant("Affix::Platform", "DragonFlyBSD", boolSV(is_defined(DC__OS_DragonFlyBSD)));
-    register_constant("Affix::Platform", "NintendoDS", boolSV(is_defined(DC__OS_NDS)));
-    register_constant("Affix::Platform", "SonyPSP", boolSV(is_defined(DC__OS_PSP)));
-    register_constant("Affix::Platform", "BeOS", boolSV(is_defined(DC__OS_BeOS)));
-    register_constant("Affix::Platform", "Plan9", boolSV(is_defined(DC__OS_Plan9)));
-    register_constant("Affix::Platform", "VMS", boolSV(is_defined(DC__OS_VMS)));
-    register_constant("Affix::Platform", "Minix", boolSV(is_defined(DC__OS_Minix)));
+    // ALIGNOF Constants
+    // Also essential for Perl-side struct layout calculations.
+    export_constant("Affix::Platform", "ALIGNOF_BOOL", "alignof", ALIGNOF_(bool));
+    export_constant("Affix::Platform", "ALIGNOF_CHAR", "alignof", ALIGNOF_(char));
+    export_constant("Affix::Platform", "ALIGNOF_SCHAR", "alignof", ALIGNOF_(signed char));
+    export_constant("Affix::Platform", "ALIGNOF_UCHAR", "alignof", ALIGNOF_(unsigned char));
+    export_constant("Affix::Platform", "ALIGNOF_WCHAR", "alignof", ALIGNOF_(wchar_t));
+    export_constant("Affix::Platform", "ALIGNOF_SHORT", "alignof", ALIGNOF_(short));
+    export_constant("Affix::Platform", "ALIGNOF_USHORT", "alignof", ALIGNOF_(unsigned short));
+    export_constant("Affix::Platform", "ALIGNOF_INT", "alignof", ALIGNOF_(int));
+    export_constant("Affix::Platform", "ALIGNOF_UINT", "alignof", ALIGNOF_(unsigned int));
+    export_constant("Affix::Platform", "ALIGNOF_LONG", "alignof", ALIGNOF_(long));
+    export_constant("Affix::Platform", "ALIGNOF_ULONG", "alignof", ALIGNOF_(unsigned long));
+    export_constant("Affix::Platform", "ALIGNOF_LONGLONG", "alignof", ALIGNOF_(long long));
+    export_constant("Affix::Platform", "ALIGNOF_ULONGLONG", "alignof", ALIGNOF_(unsigned long long));
+    export_constant("Affix::Platform", "ALIGNOF_FLOAT", "alignof", ALIGNOF_(float));
+    export_constant("Affix::Platform", "ALIGNOF_DOUBLE", "alignof", ALIGNOF_(double));
+    export_constant("Affix::Platform", "ALIGNOF_LONG_DOUBLE", "alignof", ALIGNOF_(long double));
+    export_constant("Affix::Platform", "ALIGNOF_SIZE_T", "alignof", ALIGNOF_(size_t));
+    export_constant("Affix::Platform", "ALIGNOF_SSIZE_T", "alignof", ALIGNOF_(ssize_t));
+    export_constant("Affix::Platform", "ALIGNOF_INTPTR_T", "alignof", ALIGNOF_(intptr_t));
+    export_constant("Affix::Platform", "ALIGNOF_PTR", "alignof", ALIGNOF_(void *));
 }

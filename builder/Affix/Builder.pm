@@ -21,7 +21,7 @@ class    #
     # infix and Affix stuff
     use Config qw[%Config];
     field $force : param //= 0;
-    field $debug : param = 1;
+    field $debug : param = 0;
     field $libver;
     field $cflags = $^O =~ /bsd/ ? '' : '-fPIC ' . (
         $debug > 0 ?
@@ -68,8 +68,8 @@ class    #
 
     method step_build() {
         $self->step_affix;
-        #~ ...;
 
+        #~ ...;
         #~ for my $pl_file ( find( qr/\.PL$/i, 'lib' ) ) {
         #~ use Data::Dump;
         #~ ddx $pl_file;
@@ -167,8 +167,7 @@ use %s;
 
     method step_infix () {
         $self->step_clone_infix();
-return
-        my $pre = cwd->absolute->child( qw[blib arch auto], $meta->name );
+        return my $pre = cwd->absolute->child( qw[blib arch auto], $meta->name );
         return 0 if -d $pre;
         $pre->child('lib')->mkdir;
         my $cwd       = cwd->absolute;
@@ -231,43 +230,36 @@ return
         my $has_cxx = !1;
         warn $cwd;
 
-
-       if(0) {
+        if (0) {
             use ExtUtils::ParseXS;
             my $pxs = ExtUtils::ParseXS->new;
-
-      $pxs->process_file( filename => 'lib/Affix.xs',
-                          output => 'lib/Affix.c',
-                          'C++' => 0,
-                          typemap => 'typemap',
-                          hiertype => 1,
-                          except => 1,
-                          versioncheck => 1,
-                          linenumbers => 1,
-                          optimize => 1,
-                          prototypes => 1,
-                          die_on_error => 0,
-                        );
-                    }
-
-
-        for my $source (
-            find( qr/\.c$/, $cwd->child('lib') ),
-            find( qr/\.c$/, $cwd->child('infix/src/core') )
-        ) {
+            $pxs->process_file(
+                filename     => 'lib/Affix.xs',
+                output       => 'lib/Affix.c',
+                'C++'        => 0,
+                typemap      => 'typemap',
+                hiertype     => 1,
+                except       => 1,
+                versioncheck => 1,
+                linenumbers  => 1,
+                optimize     => 1,
+                prototypes   => 1,
+                die_on_error => 0,
+            );
+        }
+        for my $source ( find( qr/\.c$/, $cwd->child('lib') ) ) {
             warn $source;
-
             my $cxx       = $source =~ /cx+$/;
             my $file_base = $source->basename(qr[.c$]);
             my $tempdir   = path('lib');
-            $tempdir->mkdir( {verbose => $verbose, mode => oct '755'} );
+            $tempdir->mkdir( { verbose => $verbose, mode => oct '755' } );
             my $version = $meta->version;
             my $obj     = $builder->object_file($source);
             push @dirs, $source->dirname();
+
             #~ warn sprintf '%d vs %d (%d)',
             #~ $source->stat->mtime, path($obj)->stat->mtime,
             #~ $source->stat->mtime - path($obj)->stat->mtime;
-
             #~ use Data::Dump;
             #~ ddx {
             #~ 'C++'        => $cxx,
@@ -280,30 +272,28 @@ return
             #~ ( '-fPIC -std=' . ( $cxx ? $cppver : $cver ) . ' ' . $cflags . ( $debug ? ' -ggdb3 -g -Wall -Wextra -pedantic' : '' ) )
             #~ };
             $has_cxx = 1 if $cxx;
-
-
-          warn cwd->child('infix')->child('src')->realpath->stringify;
-
+            warn cwd->child('infix')->child('src')->realpath->stringify;
             push @objs,    # misses headers but that's okay
                 ( $force ||
                     ( !-f $obj ) ||
                     ( $source->stat->mtime >= path($obj)->stat->mtime ) ||
                     ( path(__FILE__)->stat->mtime > path($obj)->stat->mtime ) ) ?
                 $builder->compile(
+                quiet        => 0,
                 'C++'        => $cxx,
                 source       => $source->stringify,
                 defines      => { VERSION => qq/"$version"/, XS_VERSION => qq/"$version"/ },
-                include_dirs =>
-                    [ cwd->stringify, cwd->child('infix')->realpath->stringify,
+                include_dirs => [
+                    cwd->stringify,
+                    cwd->child('infix')->realpath->stringify,
                     cwd->child('infix')->child('include')->realpath->stringify,
                     cwd->child('infix')->child('src')->realpath->stringify,
                     cwd->child('infix')->child('src/core')->realpath->stringify,
                     cwd->child('infix')->child('src/arch/x64')->realpath->stringify,
                     cwd->child('infix')->child('src/arch/aarch64')->realpath->stringify,
-
                     $source->dirname,
-                    $pre->child( $meta->name, 'include'
-                    )->stringify ],
+                    $pre->child( $meta->name, 'include' )->stringify
+                ],
                 extra_compiler_flags =>
                     ( '-fPIC -std=' . ( $cxx ? $cppver : $cver ) . ' ' . $cflags . ( $debug ? ' -ggdb3 -g -Wall -Wextra -pedantic' : '' ) )
                 ) :
@@ -313,23 +303,21 @@ return
         #~ warn join ', ', @dirs;
         #~ warn join ', ', @parts;
         #~ warn $lib_file;
-
+        use Data::Dump;
+        my $data = {
+            extra_linker_flags => ( $ldflags . ' -Lbuild_lib ' . ( $has_cxx ? '' : ' -lstdc++ ' ) . ' -linfix' ),
+            objects            => [@objs],
+            lib_file           => $lib_file,
+            module_name        => join '::',
+            @parts
+        };
+        ddx $data;
         return (
-            ( $force || ( !-f $lib_file ) || grep { path($_)->stat->mtime > path($lib_file)->stat->mtime } @objs ) ?
-                $builder->link(
-                extra_linker_flags => (
-                    $ldflags .
-                        ( join ' ', map { ' -L' . $_ } @dirs ) . ' -L' .
-                        $pre->child( $meta->name, 'lib' )->stringify .
-                        ( $has_cxx ? '' : ' -lstdc++ ' ) .
-                        ' -linfix'
-                ),
-                objects     => [@objs],
-                lib_file    => $lib_file,
-                module_name => join '::',
-                @parts
-                ) :
-                $lib_file
+            #~ ( $force || ( !-f $lib_file ) || grep { path($_)->stat->mtime > path($lib_file)->stat->mtime } @objs ) ?
+            $builder->link(%$data)
+
+            #~ :
+            #~ $lib_file
         );
     }
     };

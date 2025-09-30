@@ -12,19 +12,19 @@ class Affix::Compiler {
     use File::Spec;
     use ExtUtils::MakeMaker;
     #
-    field $os : param : reader        //= $^O;
-    field $cleanup : param : reader   //= 0;
-    field $version : param : reader   //= ();
+    field $os        : param : reader //= $^O;
+    field $cleanup   : param : reader //= 0;
+    field $version   : param : reader //= ();
     field $build_dir : param : reader //= tempdir( CLEANUP => $cleanup );
-    field $name : param : reader;
+    field $name      : param : reader;
     field $libname : reader
         = $build_dir->child( ( ( $os eq 'MSWin32' || $name =~ /^lib/ ) ? '' : 'lib' ) .
             $name . '.' .
             $Config{so} .
             ( $os eq 'MSWin32' || !defined $version ? '' : '.' . $version ) )->absolute;
     field $platform : reader = ();    # ADJUST
-    field $source : param : reader;
-    field $flags : param : reader //= {
+    field $source   : param : reader;
+    field $flags    : param : reader //= {
 
         #~ ldflags => $Config{ldflags},
         cflags   => $Config{cflags},
@@ -51,7 +51,7 @@ class Affix::Compiler {
     #~ https://stackoverflow.com/questions/71704813/writing-and-linking-shared-libraries-in-assembly-32-bit
     #~ https://github.com/therealdreg/nasm_linux_x86_64_pure_sharedlib
     field $asm : reader : param //= _can_run qw[nasm as];
-    field $c : reader : param   //= _can_run qw[gcc clang cc icc icpx cl eccp];
+    field $c   : reader : param //= _can_run qw[gcc clang cc icc icpx cl eccp];
     field $cpp : reader : param //= _can_run qw[g++ clang++ c++ icpc icpx cl eccp];
 
     #~ https://c3-lang.org/build-your-project/build-commands/
@@ -77,7 +77,7 @@ class Affix::Compiler {
     #~ https://dlang.org/articles/dll-linux.html#dso9
     #~ dmd -c dll.d -fPIC
     #~ dmd -oflibdll.so dll.o -shared -defaultlib=libphobos2.so -L-rpath=/path/to/where/shared/library/is
-    field $d : reader : param       //= _can_run qw[dmd];
+    field $d       : reader : param //= _can_run qw[dmd];
     field $fortran : reader : param //= _can_run qw[gfortran ifx ifort];
 
     #~ https://github.com/secana/Native-FSharp-Library
@@ -168,9 +168,9 @@ class Affix::Compiler {
 class Affix::Compiler::File {
     use Config     qw[%Config];
     use Path::Tiny qw[];
-    field $path : reader : param;
+    field $path  : reader : param;
     field $flags : reader : param //= ();
-    field $obj : reader : param   //= ();
+    field $obj   : reader : param //= ();
     ADJUST {
         $path = Path::Tiny::path($path) unless builtin::blessed $path;
         $obj //= $path->sibling( $path->basename(qr/\..+?$/) . $Config{_o} );
@@ -242,9 +242,9 @@ class Affix::Compiler::FortranXXXXXX : isa(Affix::Compiler) {
     use Config     qw[%Config];
     use IPC::Cmd   qw[can_run];
     use Path::Tiny qw[path];
-    field $exe : reader;
+    field $exe      : reader;
     field $compiler : reader;
-    field $linker : reader;
+    field $linker   : reader;
     #
     ADJUST {
         if ( $exe = can_run('gfortran') ) {
@@ -288,10 +288,10 @@ class Affix::Compiler::File::Dxxx {
     use Config     qw[%Config];
     use IPC::Cmd   qw[can_run];
     use Path::Tiny qw[];
-    field $exe : reader;
+    field $exe      : reader;
     field $compiler : reader;
-    field $linker : reader;
-    field $path : reader : param;
+    field $linker   : reader;
+    field $path     : reader : param;
     #
     ADJUST {
         if ( $exe = can_run('dmd') ) {

@@ -1,3 +1,11 @@
+/**
+ * @file Affix.h
+ * @brief Main internal header for the Affix Perl module.
+ *
+ * @details This header file defines all core internal data structures, macros,
+ * and function prototypes used throughout Affix.
+ */
+
 #pragma once
 
 #define PERL_NO_GET_CONTEXT 1 /* we want efficiency */
@@ -6,6 +14,12 @@
 #define NO_XSLOCKS /* for exceptions */
 #include <XSUB.h>
 
+// The core 'infix' FFI library header
+#include "include/infix.h"
+
+#include <inttypes.h>
+
+// Perl version compat
 #ifndef sv_setbool_mg
 #define sv_setbool_mg(sv, b) sv_setsv_mg(sv, boolSV(b)) /* new in perl 5.36 */
 #endif
@@ -16,9 +30,14 @@
 #define sv_setbool sv_setsv /* new in perl 5.38 */
 #endif
 
-#if __WIN32
-#include <windows.h>
+// in CORE as of perl 5.40 but I might try to support older perls without ppp
+// #if PERL_VERSION_LT(5, 40, 0)
+#if PERL_VERSION_MINOR < 40
+#define newAV_mortal() MUTABLE_AV(sv_2mortal((SV *)newAV()))
 #endif
+#define newHV_mortal() MUTABLE_HV(sv_2mortal((SV *)newHV()))
+
+#define hv_existsor(hv, key, _or) hv_exists(hv, key, strlen(key)) ? *hv_fetch(hv, key, strlen(key), 0) : _or
 
 #ifdef MULTIPLICITY
 #define storeTHX(var) (var) = aTHX
@@ -28,14 +47,30 @@
 #define dTHXfield(var)
 #endif
 
-// in CORE as of perl 5.40 but I might try to support older perls without ppp
-// #if PERL_VERSION_LT(5, 40, 0)
-#if PERL_VERSION_MINOR < 40
-#define newAV_mortal() MUTABLE_AV(sv_2mortal((SV *)newAV()))
+// --- Dynamic Library Loading Abstraction ---
+#if defined(FFI_OS_WINDOWS)
+// --- Windows Implementation ---
+#include <windows.h>
+typedef HMODULE DLLib;
+#else
+// --- POSIX (dlfcn) Implementation ---
+#include <dlfcn.h>
+typedef void * DLLib;
 #endif
-#define newHV_mortal() MUTABLE_HV(sv_2mortal((SV *)newHV()))
 
-#define hv_existsor(hv, key, _or) hv_exists(hv, key, strlen(key)) ? *hv_fetch(hv, key, strlen(key), 0) : _or
+DLLib load_library(const char * lib);
+void * find_symbol(DLLib lib, const char * name);
+void free_library(DLLib lib);
+const char * get_dl_error();
+
+// Portable alignment macro to replace C11 `alignas`
+#if defined(__GNUC__) || defined(__clang__)
+#define AFFIX_ALIGNAS(n) __attribute__((aligned(n)))
+#elif defined(_MSC_VER)
+#define AFFIX_ALIGNAS(n) __declspec(align(n))
+#else
+#define AFFIX_ALIGNAS(n)
+#endif
 
 /* NOTE: the prototype of newXSproto() is different in versions of perls,
  * so we define a portable version of newXSproto()
@@ -65,298 +100,122 @@
 #define av_count(av) (AvFILL(av) + 1)
 #endif
 
+
+// Context key for thread-local storage in Perl
 #define MY_CXT_KEY "Affix::_cxt" XS_VERSION
 
-#include <dyncall/dyncall.h>
-#include <dyncall/dyncall_aggregate.h>
-#include <dyncall/dyncall_callf.h>
-#include <dyncall/dyncall_signature.h>
-#include <dyncall/dyncall_value.h>
-#include <dyncall/dyncall_version.h>
-#include <dyncallback/dyncall_callback.h>
-#include <dynload/dynload.h>
-
-typedef struct {
-    DCCallVM * cvm;
-} my_cxt_t;
-
-#if defined(DC__OS_Win32) || defined(DC__OS_Win64)
-#elif defined(DC__OS_MacOS)
-#else
-#include <dlfcn.h>
-//~ #include <iconv.h>
-#endif
-
-#include <inttypes.h>
-#include <wchar.h>
-
-#ifdef DC__OS_Win64
-static const char * dlerror(void) {
-    static char buf[1024];
-    DWORD dw = GetLastError();
-    if (dw == 0)
-        return NULL;  // No error
-    DWORD result = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                                  NULL,
-                                  dw,
-                                  0,  // Default language
-                                  (LPSTR)buf,
-                                  sizeof(buf),
-                                  NULL);
-
-    if (result == 0)
-        snprintf(buf, sizeof(buf), "Unknown Windows error 0x%u", (unsigned int)dw);
-    else {
-        // FormatMessage often appends a LF and/or CR
-        size_t len = strlen(buf);
-        while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
-            buf[--len] = '\0';
-    }
-    return buf;
-}
-#endif  // DC__OS_Win64
-
-#if DEBUG > 1  // Simple location ping. No-op if DEBUG is not high enough.
-#define PING warn("Ping at %s line %d", __FILE__, __LINE__);
-#else
-#define PING ;
-#endif
-
-/*
-Native argument types used internally by Affix. These match Itanium mangling
-which differs from dyncall's sigchars.
-
-https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling-builtin
+/**
+@struct Affix
+@brief Holds the state for a single affixed (JIT-compiled) C function.
+@details This structure is the heart of an affixed function. It stores the
+pointer to the target C function and all the necessary metadata generated
+by the 'infix' library. This includes the handle to the executable trampoline
+and the parsed type information, which is used as a blueprint for data
+marshalling during calls.
 */
-#define VOID_FLAG 'v'
-#define BOOL_FLAG 'b'
-#define SCHAR_FLAG 'a'
-#define CHAR_FLAG 'c'
-#define UCHAR_FLAG 'h'
-#define WCHAR_FLAG 'w'
-#define SHORT_FLAG 's'
-#define USHORT_FLAG 't'
-#define INT_FLAG 'i'
-#define UINT_FLAG 'j'
-#define LONG_FLAG 'l'
-#define ULONG_FLAG 'm'
-#define LONGLONG_FLAG 'x'
-#define ULONGLONG_FLAG 'y'
-#define SIZE_T_FLAG 'o'
-#define SSIZE_T_FLAG 'O'
-#define FLOAT_FLAG 'f'
-#define DOUBLE_FLAG 'd'
-#define STDSTRING_FLAG 'Y'  // Placeholder/future for std::string if I go with C++
-#define STRUCT_FLAG 'A'
-#define CPPSTRUCT_FLAG 'B'
-#define UNION_FLAG 'u'
-#define POINTER_FLAG 'p'
-#define ARRAY_FLAG '@'
-#define STRING_FLAG 'Z'
-#define WSTRING_FLAG 'z'
-#define CV_FLAG '&'
-#define SV_FLAG '$'
-#define ENUM_FLAG 'E'
-
-// Calling conventions
-#define MODE_FLAG '_'         // General mode/modifier flag
-#define RESET_FLAG '>'        // Reset calling convention/state
-#define DEFAULT_FLAG ':'      // Default calling convention
-#define THIS_FLAG '*'         // C++ 'this' pointer for methods
-#define ELLIPSIS_FLAG 'e'     // Varargs ellipsis (...)
-#define VARARGS_FLAG '.'      // Dyncall varargs (distinct from ellipsis)
-#define CDECL_FLAG 'D'        // C Declaration calling convention
-#define STDCALL_FLAG 'T'      // Standard Call calling convention (Windows)
-#define MSFASTCALL_FLAG '='   // Microsoft FastCall (Windows)
-#define GNUFASTCALL_FLAG '3'  // GNU FastCall (Linux/GCC)
-#define MSTHIS_FLAG '+'       // Microsoft 'thiscall'
-#define GNUTHIS_FLAG '#'      // GNU 'thiscall'
-#define ARM_FLAG 'r'          // ARM calling convention
-#define THUMB_FLAG 'g'        // ARM Thumb calling convention
-#define SYSCALL_FLAG 'H'      // System call convention
-
-/*
-Returns the amount of padding needed after `offset` to ensure that the
-following address will be aligned to `alignment`.
-
-http://www.catb.org/esr/structure-packing/#_structure_alignment_and_padding
-*/
-#if 1  // Assumes HAVE_ALIGNOF (GCC/Clang extension)
-/* A GCC extension. */
-#define alignof(t) __alignof__(t)
-#elif defined _MSC_VER
-#define alignof(t) __alignof(t)
-#else
-/* Fallback. Calculate by measuring structure padding. */
-#define alignof(t)         \
-    ((char *)(&((struct {  \
-                   char c; \
-                   t _h;   \
-               } *)0)      \
-                   ->_h) - \
-     (char *)0)
-#endif
-
-// MEM_ALIGNBYTES is messed up by quadmath and long doubles
-#define AFFIX_ALIGNBYTES __alignof__(intptr_t)
-
-/* Some are undefined in perlapi */
-#define SIZEOF_BOOL sizeof(bool)
-#define SIZEOF_CHAR sizeof(char)
-#define SIZEOF_SCHAR sizeof(signed char)
-#define SIZEOF_UCHAR sizeof(unsigned char)
-#define SIZEOF_WCHAR sizeof(wchar_t)
-#define SIZEOF_SHORT sizeof(short)
-#define SIZEOF_USHORT sizeof(unsigned short)
-#define SIZEOF_INT INTSIZE
-#define SIZEOF_UINT sizeof(unsigned int)
-#define SIZEOF_LONG sizeof(long)
-#define SIZEOF_ULONG sizeof(unsigned long)
-#define SIZEOF_LONGLONG sizeof(long long)
-#define SIZEOF_ULONGLONG sizeof(unsigned long long)
-#define SIZEOF_FLOAT sizeof(float)
-#define SIZEOF_DOUBLE sizeof(double)
-#define SIZEOF_SIZE_T (sizeof(size_t))
-#define SIZEOF_SSIZE_T (sizeof(ssize_t))
-#define SIZEOF_INTPTR_T sizeof(intptr_t)
-#define SIZEOF_SV sizeof(SV)
-
-#define ALIGNOF_BOOL __alignof__(bool)
-#define ALIGNOF_CHAR __alignof__(char)
-#define ALIGNOF_SCHAR __alignof__(signed char)
-#define ALIGNOF_UCHAR __alignof__(unsigned char)
-#define ALIGNOF_WCHAR __alignof__(wchar_t)
-#define ALIGNOF_SHORT __alignof__(short)
-#define ALIGNOF_USHORT __alignof__(unsigned short)
-#define ALIGNOF_INT __alignof__(int)
-#define ALIGNOF_UINT __alignof__(unsigned int)
-#define ALIGNOF_LONG __alignof__(long)
-#define ALIGNOF_ULONG __alignof__(unsigned long)
-#define ALIGNOF_LONGLONG __alignof__(long long)
-#define ALIGNOF_ULONGLONG __alignof__(unsigned long long)
-#define ALIGNOF_FLOAT __alignof__(float)
-#define ALIGNOF_DOUBLE __alignof__(double)
-#define ALIGNOF_INTPTR_T __alignof__(intptr_t)
-#define ALIGNOF_SIZE_T __alignof__(size_t)
-#define ALIGNOF_SSIZE_T __alignof__(ssize_t)
-#define ALIGNOF_SV __alignof__(SV)
-
-// Forward!
-typedef struct _Affix Affix;
-typedef struct _Affix_Type Affix_Type;
-
-// Represents a field within an aggregate type (struct/union).
-typedef struct {
-    char * name;
-    Affix_Type * type;
-} Affix_Type_Aggregate_Fields;
-
-// Represents a Perl subroutine (CV) acting as a callback from C.
-typedef struct {
-    SV * cv;
-    size_t arg_count;
-    I32 cb_context;
-    Affix_Type ** args;
-    Affix_Type * ret;
-    SV * retval;
-    dTHXfield(perl)
-} Affix_Type_Callback;
-
-// Represents an aggregate C type (struct or union)
-typedef struct {
-    size_t field_count;
-    DCaggr * ag;
-    Affix_Type_Aggregate_Fields * fields;
-} Affix_Type_Aggregate;
-
-// Represents a C array type.
-typedef struct {
-    Affix_Type * type;
-    size_t length;
-} Affix_Type_Array;
-
-// Function pointer typedefs for type-specific operations (weak polymorphism)
-typedef void (*handle_store)(pTHX_ Affix_Type *, SV *, DCpointer *);
-typedef SV * (*handle_fetch)(pTHX_ Affix_Type *, DCpointer, SV *);
-typedef SV * (*handle_call)(pTHX_ Affix *, Affix_Type *, DCCallVM *, DCpointer);
-typedef size_t (*handle_pass)(pTHX_ Affix *, Affix_Type *, DCCallVM *, Stack_off_t);
-typedef DCsigchar (*handle_cb_call)(pTHX_ Affix_Type *, DCValue *, SV *);  // XXX: INCOMPLETE
-typedef SV * (*handle_cb_pass)(pTHX_ Affix_Type *, DCArgs *);
-
-// The goods.
-typedef struct _Affix_Type {
-    char type;
-    DCsigchar dc_type;
-    size_t size, align, offset;
-    union {
-        Affix_Type * pointer_type;
-        Affix_Type_Array * array_type;
-        Affix_Type_Aggregate * aggregate_type;  // For hashes and structs
-        Affix_Type_Callback * callback_type;
-    } data;
-    //
-    handle_store store;
-    handle_fetch fetch;
-    handle_call call;
-    handle_pass pass;
-    handle_cb_call cb_call;
-    handle_cb_pass cb_pass;
-} Affix_Type;
-
-// No, wait, this is the goods.
 typedef struct _Affix {
-    size_t lvalue_count, args;
-    DCpointer symbol;
-    Affix_Type ** push;
-    Affix_Type * pop;
-    DCpointer * lvalues;
-    Stack_off_t instructions;
+    /// @brief The raw pointer to the native C function to be called.
+    void * symbol;
+    /// @brief A handle to the JIT-compiled executable trampoline generated by infix.
+    ffi_forward_t * trampoline;
+    /// @brief The memory arena holding the entire ffi_type object graph for this signature.
+    /// This is kept for proper memory management.
+    arena_t * type_arena;
+    /// @brief The ffi_type descriptor for the function's return value.
+    ffi_type * return_type;
+    /// @brief An array of ffi_type* descriptors, one for each function argument.
+    ffi_type ** arg_types;
+    /// @brief The total number of arguments the function takes.
+    size_t num_args;
+    /// @brief The number of non-variadic arguments the function takes.
+    size_t num_fixed_args;
 } Affix;
 
-// Represents a managed pointer, typically for a C data structure or actual pointer
+/**
+ * @struct Affix_Pointer
+ * @brief The internal C struct that backs every Affix::Pointer Perl object.
+ * @details This is the core data structure for representing a C pointer.
+ *          It holds not just the raw address, but also the metadata required
+ *          for typed dereferencing, iteration, and memory management.
+ */
 typedef struct {
+    /// @brief The base C memory address of the allocated block. This address does not change.
+    void * address;
+    /// @brief An infix `ffi_type` that describes the data for a SINGLE ELEMENT
+    /// that this pointer is pointing to. Used for offset calculations and dereferencing.
+    ffi_type * type;
+    /// @brief The arena that owns the `type` graph. This must be destroyed
+    /// when the Affix_Pointer object is destroyed.
+    arena_t * type_arena;
+    /// @brief The total number of elements of `type` that fit in the memory block
+    /// starting at `address`. Used for bounds checking.
     size_t count;
+    /// @brief The current position for iterator-style access, in element counts.
+    /// This value is modified by the ++ and -- operators.
     size_t position;
-    DCpointer address;
-    Affix_Type * type;
+    /// @brief If true, Affix is responsible for `safefree()`ing the `address`
+    /// when this object is destroyed.
+    bool managed;
 } Affix_Pointer;
 
-// Affix.c
-void destroy_affix(pTHX_ Affix * affix);
-
-// Type.c
-#define AFFIX_PUSH(Type) \
-    STATIC size_t _pass_##Type(pTHX_ Affix * affix, Affix_Type * type, DCCallVM * cvm, Stack_off_t st)
-#define AFFIX_CALL(Type) \
-    STATIC SV * _call_##Type(pTHX_ Affix * affix, Affix_Type * type, DCCallVM * cvm, DCpointer entrypoint)
-#define CALLBACK_PUSH(Type) STATIC SV * _cb_pass_##Type(pTHX_ Affix_Type * type, DCArgs * args)
-#define CALLBACK_CALL(Type) STATIC DCsigchar _cb_call_##Type(pTHX_ Affix_Type * type, DCValue * result, SV * sv)
-#define POINTER_STORE(Type) STATIC void _store_##Type(pTHX_ Affix_Type * type, SV * data, DCpointer * target)
-#define POINTER_FETCH(Type) STATIC SV * _fetch_##Type(pTHX_ Affix_Type * type, DCpointer data, SV * sv)
-Affix_Type * new_Affix_Type(pTHX_ SV *);
-void destroy_Affix_Type(pTHX_ Affix_Type *);
-Affix_Type * _reset();
-Affix_Type * _mode();
-Affix_Type * _aggr();
-DCsigchar _handle_CV(DCCallback *, DCArgs *, DCValue *, DCpointer);
-
-// pin.c
+/**
+@struct Affix_Pin
+@brief Manages the binding between a Perl scalar and a native C variable.
+@details This struct is attached via Perl's magic to a scalar. It holds a
+pointer to the native C data and an ffi_type descriptor that tells the
+marshalling code how to convert data between Perl's SV representation and the
+C memory layout.
+*/
 typedef struct {
-    DCpointer pointer;
-    Affix_Type * type;
+    /// @brief The raw pointer to the C data.
+    void * pointer;
+    /// @brief The ffi_type that describes the C data, used for marshalling.
+    ffi_type * type;
+    /// This is kept for proper memory management.
+    arena_t * type_arena;
+    /// @brief If true, Affix is responsible for free()ing the pointer when the pin is destroyed.
     bool managed;
 } Affix_Pin;
-bool is_pin(pTHX_ SV *);
-DCpointer get_pin_pointer(pTHX_ SV * sv);
+
+/**
+ * @struct Affix_Callback
+ * @brief A context struct to hold the state for a single callback.
+ * @details This struct is passed as the `user_data` to infix's reverse
+ *          trampoline. It acts as a bridge, allowing our generic C handler to
+ *          find the specific Perl subroutine and type information it needs to execute.
+ */
+typedef struct {
+    /// @brief The Perl CV* to call
+    SV * perl_sub;
+    /// @brief The ffi_type of the callback's return value
+    ffi_type * return_type;
+    /// @brief An array of ffi_type* for each argument
+    ffi_type ** arg_types;
+    /// @brief The number of arguments
+    size_t num_args;
+    /// @brief The Perl interpreter context for thread safety
+    dTHXfield(perl)
+} Affix_Callback;
+
+// Affix.c - Core FFI logic & Library Loading
+void destroy_affix(pTHX_ Affix * affix);
+DLLib load_library(const char * lib);
+void free_library(DLLib lib);
+void * find_symbol(DLLib lib, const char * name);
+
+// marshal.c - Data conversion between Perl SVs and C types
+void marshal_sv_to_c(pTHX_ void * dest_c, SV * src_sv, ffi_type * type_info);
+SV * fetch_c_to_sv(pTHX_ void * src_c, ffi_type * type_info);
+
+// pin.c - Logic for tying SVs to C pointers
+void pin(pTHX_ arena_t * type_arena, ffi_type * type, SV * sv, void * ptr, bool managed);
+bool is_pin(pTHX_ SV * sv);
 Affix_Pin * get_pin(pTHX_ SV * sv);
-void pin(pTHX_ Affix_Type * type, SV * sv, DCpointer ptr);
 
-// wchar_t.c
-wchar_t * utf2wchar(pTHX_ SV *, size_t);
-SV * wchar2utf(pTHX_ wchar_t *, size_t);
+// Callback.c - Reverse trampoline system
+void _Affix_callback_handler(ffi_reverse_trampoline_t * context, void * return_value_ptr, void ** args_array);
 
-// utils.c
-SV * gen_dualvar(pTHX_ IV, const char *);
+// utils.c - General helper functions
 #define export_function(package, what, tag) \
     _export_function(aTHX_ get_hv(form("%s::EXPORT_TAGS", package), GV_ADD), what, tag)
 void register_constant(const char * package, const char * name, SV * value);
@@ -364,17 +223,24 @@ void _export_function(pTHX_ HV * _export, const char * what, const char * _tag);
 void export_constant_char(const char * package, const char * name, const char * _tag, char val);
 void export_constant(const char * package, const char * name, const char * _tag, double val);
 void set_isa(const char * klass, const char * parent);
-DCsigchar atype_to_dtype(char);
-const char * dump_Affix_Type(pTHX_ Affix_Type * type);
 
+// utils.c - Debugging helpers
+#if DEBUG > 1
+#define PING warn("Ping at %s line %d", FILE, LINE);
+#else
+#define PING
+#endif
+
+// The macro `DumpHex` calls the real function `_DumpHex`.
+// Only the real function `_DumpHex` gets a prototype.
 #define DumpHex(addr, len) _DumpHex(aTHX_ addr, len, __FILE__, __LINE__)
 void _DumpHex(pTHX_ const void * addr, size_t len, const char * file, int line);
+
 #define DD(scalar) _DD(aTHX_ scalar, __FILE__, __LINE__)
 void _DD(pTHX_ SV * scalar, const char * file, int line);
 
-// XS Boot
+// XS Bootstrapping Functions (one for each Perl package)
 void boot_Affix_Platform(pTHX_ CV *);
 void boot_Affix_Pointer(pTHX_ CV *);
 void boot_Affix_pin(pTHX_ CV *);
-void boot_Affix_Type(pTHX_ CV *);
-//~ void boot_Affix_Lib(pTHX_ CV *);
+void boot_Affix_Callback(pTHX_ CV *);

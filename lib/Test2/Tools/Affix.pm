@@ -9,20 +9,23 @@ package Test2::Tools::Affix 0.09 {
     use Test2::Plugin::UTF8;
     use Test2::IPC;
     use Path::Tiny qw[path tempfile];
-    use parent 'Exporter';
-    use vars qw[%EXPORT_TAGS @EXPORT];
+    use Exporter 'import';
     use Capture::Tiny ':all';
-    push @EXPORT, qw[
-        compile_ok affix_ok leaks
-        todo skip skip_all done_testing diag note
-        subtest ok isa_ok skip_all is isnt like
-        pass
-        lives dies try_ok warns
-        U D T F DNE array string float number bool hash etc end
-        refcount
-        can_ok isa_ok
-        capture
-    ];
+    our %EXPORT_TAGS = (
+        all => [
+            our @EXPORT
+                = qw[
+                compile_ok affix_ok leaks
+                plan todo skip skip_all done_testing diag note
+                subtest ok isa_ok skip_all is isnt like
+                pass
+                lives dies try_ok warns
+                U D T F DNE array string float number bool hash etc end
+                refcount
+                can_ok isa_ok
+                capture]
+        ]
+    );
     #
     my $OS  = $^O;
     my $Inc = path($0)->absolute;

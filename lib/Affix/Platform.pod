@@ -7,9 +7,6 @@ Affix::Platform - Platform and Feature Support Information
 =head1 SYNOPSIS
 
     use Affix;    # Not 'use Affix::Platform;'
-    if ( Affix::Platform::AggrByValue() ) {
-        affix 'libfoo', 'foobar', [ Struct [ x => Int ] ], Int;
-    }
 
 =head1 DESCRIPTION
 
@@ -20,37 +17,37 @@ situations, various flags have been exposed.
 
 You might need to know a little about the system so...
 
-=head2 C<Affix::Platform::DC_Version()>
+=head2 C<Affix::Platform::INFIX_Version()>
 
-Returns dyncall's version as a string such as "1.5-current".
+Returns infix's version as a string such as "1.5-current".
 
-=head2 C<Affix::Platform::DC_Major()>
+=head2 C<Affix::Platform::INFIX_Major()>
 
-Returns dyncall's major version number.
+Returns infix's major version number.
 
-=head2 C<Affix::Platform::DC_Minor()>
+=head2 C<Affix::Platform::INFIX_Minor()>
 
-Returns dyncall's minor version number.
+Returns infix's minor version number.
 
-=head2 C<Affix::Platform::DC_Patch()>
+=head2 C<Affix::Platform::INFIX_Patch()>
 
-Returns dyncall's patch level. dyncall refers to this as their 'teeny' version number which is usually C<0> and unused.
+Returns infix's patch level. infix refers to this as their 'teeny' version number which is usually C<0> and unused.
 
 =head2 C<Affix::Platform::DC_Stage()>
 
-Returns "current" if dyncall's source is taken from the repo or "release" for stable, archived versions.
+Returns "current" if infix's source is taken from the repo or "release" for stable, archived versions.
 
 =begin clutter
 
 =head2 C<Affix::Platform::DC_RawVersion()>
 
-Returns the raw value of dyncall's version number.
+Returns the raw value of infix's version number.
 
 =end clutter
 
 =head2 C<Affix::Platform::OS()>
 
-Returns one of the following values indicating what platform the dyncall library was built on:
+Returns one of the following values indicating what platform the infix library was built on:
 
 =over
 
@@ -58,7 +55,7 @@ Returns one of the following values indicating what platform the dyncall library
 
 =item "Win32"
 
-If dyncall was built on a 32bit version of Windows, 64bit integers are unsupported even if your perl is built to handle
+If infix was built on a 32bit version of Windows, 64bit integers are unsupported even if your perl is built to handle
 them.
 
 =item "macOS"
@@ -91,7 +88,7 @@ BeOS lives!
 
 =item "Unknown"
 
-dyncall couldn't figure it out
+infix couldn't figure it out
 
 =back
 
@@ -166,36 +163,36 @@ compiler.
 
 =head2 C<Affix::Platform::MS_CRT()>
 
-Returns a true value if dyncall was built Windows with the Microsoft Visual C/C++ Runtime.
+Returns a true value if infix was built Windows with the Microsoft Visual C/C++ Runtime.
 
 =head2 C<Affix::Platform::ARM_Thumb()>
 
-Returns a true value if dyncall was built on an ARM platform which included the 16bit instructions found in ARMv4T and
+Returns a true value if infix was built on an ARM platform which included the 16bit instructions found in ARMv4T and
 later.
 
 =head2 C<Affix::Platform::ARM_EABI()>
 
-Returns a true value if dyncall was built on ARM with support for the more efficient EABI calling conventions.
+Returns a true value if infix was built on ARM with support for the more efficient EABI calling conventions.
 
 =head2 C<Affix::Platform::ARM_OABI()>
 
-Returns a true value if dyncall was built on an ARM platform with OABI calling conventions support.
+Returns a true value if infix was built on an ARM platform with OABI calling conventions support.
 
 =head2 C<Affix::Platform::MIPS_O32()>
 
-Returns a true value if dyncall was built on MIPS with O32 (only 32bit) calling conventions support.
+Returns a true value if infix was built on MIPS with O32 (only 32bit) calling conventions support.
 
 =head2 C<Affix::Platform::MIPS_N64()>
 
-Returns a true value if dyncall was built on MIPS with N64 (native 64bit) calling conventions support.
+Returns a true value if infix was built on MIPS with N64 (native 64bit) calling conventions support.
 
 =head2 C<Affix::Platform::MIPS_N32()>
 
-Returns a true value if dyncall was built on MIPS with N32 (native 32bit) calling conventions support.
+Returns a true value if infix was built on MIPS with N32 (native 32bit) calling conventions support.
 
 =head2 C<Affix::Platform::MIPS_EABI()>
 
-Returns a true value if dyncall was built on MIPS with L<EABI calling conventions
+Returns a true value if infix was built on MIPS with L<EABI calling conventions
 support|https://sourceware.org/legacy-ml/binutils/2003-06/msg00436.html>.
 
 =head2 C<Affix::Platform::OBJ_PE()>
@@ -363,7 +360,7 @@ Sanko Robinson E<lt>sanko@cpan.orgE<gt>
 
 =begin stopwords
 
-dyncall BeOS ARMv4T SuperH ppc iOS OpenBSD NetBSD syscall
+infix BeOS ARMv4T SuperH ppc iOS OpenBSD NetBSD syscall
 
 =end stopwords
 
