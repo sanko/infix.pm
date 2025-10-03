@@ -1,11 +1,21 @@
-// This file is now complete and correct from the previous step.
-// No further changes are needed. It correctly uses the native library
-// loading functions and calls the correct infix parsing function.
-// Please ensure you are using the version from the "implicit declaration" fix.
 #include "Affix.h"
 #include <string.h>
 
-#if defined(FFI_OS_WINDOWS)
+
+// Include the entire infix library
+#include "../../infix/src/infix.c"
+
+// Include all other Affix module C files
+#include "Affix/Callback.c"
+#include "Affix/Platform.c"
+#include "Affix/Pointer.c"
+#include "Affix/marshal.c"
+#include "Affix/pin.c"
+#include "Affix/utils.c"
+#include "Affix/wchar_t.c"
+
+
+#if defined(INFIX_OS_WINDOWS)
 // --- Windows Implementation ---
 DLLib load_library(const char * lib) {
     return LoadLibraryA(lib);
@@ -102,50 +112,51 @@ XS_INTERNAL(Affix_free_library) {
     XSRETURN_EMPTY;
 }
 // --- Affix Struct Management ---
-void destroy_affix(pTHX_ Affix * affix) {
-    if (affix == NULL)
+void destroy_affix(pTHX_ Affix_Context * context) {
+    if (context == NULL)
         return;
-    if (affix->trampoline)
-        ffi_trampoline_free(affix->trampoline);
-    if (affix->type_arena)
-        arena_destroy(affix->type_arena);
-    safefree(affix);
+    infix_forward_destroy(context->trampoline);
+    safefree(context);
 }
 // --- The Runtime Trigger ---
 extern void _Affix_trigger_infix(pTHX_ CV * cv) {
     dSP;
     dAXMARK;
-    Affix * affix = (Affix *)XSANY.any_ptr;
+    Affix_Context * context = (Affix_Context *)XSANY.any_ptr;
+    Affix affix = context->trampoline;
     size_t items = (SP - MARK);
 
-    if (UNLIKELY(items != affix->num_args))
-        croak("Wrong number of arguments to affixed function: expected %" UVuf ", got %d", (UV)affix->num_args, items);
+    if (UNLIKELY(items != infix_forward_get_num_args(affix)))
+        croak("Wrong number of arguments to affixed function: expected %" UVuf ", got %d",
+              (UV)infix_forward_get_num_args(affix),
+              items);
 
-    ffi_cif_func jit_func = (ffi_cif_func)ffi_trampoline_get_code(affix->trampoline);
+    infix_cif_func jit_func = (infix_cif_func)infix_forward_get_code(affix);
     if (UNLIKELY(!jit_func))
         croak("Internal Affix Error: JIT trampoline is not executable.");
 
+    size_t num_args = infix_forward_get_num_args(affix);
     size_t total_arg_data_size = 0;
-    for (size_t i = 0; i < affix->num_args; ++i)
-        total_arg_data_size += (affix->arg_types[i]->size + 15) & ~15;
+    for (size_t i = 0; i < num_args; ++i)
+        total_arg_data_size += (infix_forward_get_arg_type(affix, i)->size + 15) & ~15;
 
     char * c_args_buffer = (char *)alloca(total_arg_data_size);
-    void ** args_array = (void **)alloca(affix->num_args * sizeof(void *));
+    void ** args_array = (void **)alloca(num_args * sizeof(void *));
     char * current_arg_ptr = c_args_buffer;
 
     for (int i = 0; i < items; ++i) {
         current_arg_ptr = (char *)(((uintptr_t)current_arg_ptr + 15) & ~15);
-        marshal_sv_to_c(aTHX_ current_arg_ptr, ST(i), affix->arg_types[i]);
+        marshal_sv_to_c(aTHX_ current_arg_ptr, ST(i), infix_forward_get_arg_type(affix, i));
         args_array[i] = current_arg_ptr;
-        current_arg_ptr += affix->arg_types[i]->size;
+        current_arg_ptr += infix_forward_get_arg_type(affix, i)->size;
     }
 
-    AFFIX_ALIGNAS(_Alignof(long double)) char return_buffer[affix->return_type->size];
-    jit_func(affix->symbol, &return_buffer, args_array);
-    if (affix->return_type->category == FFI_TYPE_VOID)
+    AFFIX_ALIGNAS(_Alignof(long double)) char return_buffer[infix_forward_get_return_type(affix)->size];
+    jit_func(context->symbol, &return_buffer, args_array);
+    if (infix_forward_get_return_type(affix)->category == INFIX_TYPE_VOID)
         PL_stack_sp = PL_stack_base + ax - 1;
     else {
-        SV * return_sv = fetch_c_to_sv(aTHX_ & return_buffer, affix->return_type);
+        SV * return_sv = fetch_c_to_sv(aTHX_ & return_buffer, infix_forward_get_return_type(affix));
         ST(0) = return_sv;
         PL_stack_sp = PL_stack_base + ax;
     }
@@ -165,39 +176,56 @@ XS_INTERNAL(Affix_affix) {
     const char * signature = SvPV_nolen(ST(2));
     const char * rename = items == 4 && SvOK(ST(3)) ? SvPV_nolen(ST(3)) : NULL;
     const char * install_name = (ix == 0) ? (rename ? rename : SvPV_nolen(ST(1))) : NULL;
-    Affix * affix;
-    Newxz(affix, 1, Affix);
-    affix->symbol = funcptr;
 
-    ffi_status status = ffi_signature_parse(signature,
-                                            &affix->type_arena,
-                                            &affix->return_type,
-                                            &affix->arg_types,
-                                            &affix->num_args,
-                                            &affix->num_fixed_args);
-    if (status != FFI_SUCCESS) {
-        safefree(affix);
-        croak("Failed to parse FFI signature string: '%s' [%d != %d]", signature, status, FFI_SUCCESS);
+    Affix_Context * context;
+    Newxz(context, 1, Affix_Context);
+    context->symbol = funcptr;
+
+    infix_arena_t * parse_arena = NULL;
+    infix_type * return_type = NULL;
+    infix_function_argument * args = NULL;
+    size_t num_args = 0;
+    size_t num_fixed_args = 0;
+
+    infix_status status =
+        infix_signature_parse(signature, &parse_arena, &return_type, &args, &num_args, &num_fixed_args);
+    if (status != INFIX_SUCCESS) {
+        if (parse_arena)
+            infix_arena_destroy(parse_arena);
+        safefree(context);
+        croak("Failed to parse FFI signature string: '%s' [%d != %d]", signature, status, INFIX_SUCCESS);
     }
-    status = generate_forward_trampoline(
-        &affix->trampoline, affix->return_type, affix->arg_types, affix->num_args, affix->num_fixed_args);
-    if (status != FFI_SUCCESS) {
-        destroy_affix(aTHX_ affix);
+
+    infix_type ** arg_types = NULL;
+    if (num_args > 0) {
+        arg_types = infix_arena_alloc(parse_arena, sizeof(infix_type *) * num_args, _Alignof(infix_type *));
+        for (size_t i = 0; i < num_args; i++) {
+            arg_types[i] = args[i].type;
+        }
+    }
+
+    status = infix_forward_create_manual(&context->trampoline, return_type, arg_types, num_args, num_fixed_args);
+
+    if (parse_arena)
+        infix_arena_destroy(parse_arena);
+
+    if (status != INFIX_SUCCESS) {
+        safefree(context);
         croak("Failed to generate FFI trampoline for signature: '%s' [%d]", signature, status);
     }
 
-    char * prototype = (char *)safemalloc(affix->num_args + 1);
-    memset(prototype, '$', affix->num_args);
-    prototype[affix->num_args] = '\0';
+    char * prototype = (char *)safemalloc(num_args + 1);
+    memset(prototype, '$', num_args);
+    prototype[num_args] = '\0';
 
     STMT_START {
         cv = newXSproto_portable(install_name, _Affix_trigger_infix, __FILE__, prototype);
         safefree(prototype);
         if (!cv) {
-            destroy_affix(aTHX_ affix);
+            destroy_affix(aTHX_ context);
             croak("Failed to create new XSUB");
         }
-        XSANY.any_ptr = (void *)affix;
+        XSANY.any_ptr = (void *)context;
     }
     STMT_END;
 
@@ -209,17 +237,17 @@ XS_INTERNAL(Affix_affix) {
 XS_INTERNAL(Affix_DESTROY) {
     dXSARGS;
     PERL_UNUSED_VAR(items);
-    Affix * affix;
+    Affix_Context * context;
     STMT_START {  // peel this grape
         HV * st;
         GV * gvp;
         SV * const xsub_tmp_sv = ST(0);
         SvGETMAGIC(xsub_tmp_sv);
         CV * cv = sv_2cv(xsub_tmp_sv, &st, &gvp, 0);
-        affix = (Affix *)XSANY.any_ptr;
+        context = (Affix_Context *)XSANY.any_ptr;
     }
     STMT_END;
-    destroy_affix(aTHX_ affix);
+    destroy_affix(aTHX_ context);
     XSRETURN_EMPTY;
 }
 

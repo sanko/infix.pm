@@ -9,7 +9,7 @@
  *
  * This implementation has been refactored to use the `infix` FFI library's type
  * system. Instead of a complex, custom type struct, an `Affix_Pin` now holds an
- * `ffi_type*` which serves as a complete blueprint for marshalling the data.
+ * `infix_type*` which serves as a complete blueprint for marshalling the data.
  */
 
 #include "../Affix.h"
@@ -21,18 +21,17 @@
  * @param pin The pin to destroy.
  */
 void delete_pin(pTHX_ Affix_Pin * pin) {
-    if (pin == NULL) {
+    if (pin == NULL)
         return;
-    }
+
     // If this pin "owns" the C memory, free it.
-    if (pin->managed && pin->pointer != NULL) {
+    if (pin->managed && pin->pointer != NULL)
         safefree(pin->pointer);
-    }
-    // The ffi_type is stored in an arena owned by the pin. Destroying the
+
+    // The infix_type is stored in an arena owned by the pin. Destroying the
     // arena frees the type graph.
-    if (pin->type_arena != NULL) {
-        arena_destroy(pin->type_arena);
-    }
+    if (pin->type_arena != NULL)
+        infix_arena_destroy(pin->type_arena);
     safefree(pin);
 }
 
@@ -138,13 +137,13 @@ Affix_Pin * get_pin(pTHX_ SV * sv) {
 
 /**
  * @brief Attaches magic to an SV to pin it to a C memory location.
- * @param type The ffi_type describing the C data.
+ * @param type The infix_type describing the C data.
  * @param sv The Perl scalar to attach the magic to.
  * @param ptr The C memory address to pin to.
  * @param managed If true, the C pointer will be safefree'd when the pin is destroyed.
- * @note This function takes ownership of the arena associated with the ffi_type.
+ * @note This function takes ownership of the arena associated with the infix_type.
  */
-void pin(pTHX_ arena_t * type_arena, ffi_type * type, SV * sv, void * ptr, bool managed) {
+void pin(pTHX_ infix_arena_t * type_arena, infix_type * type, SV * sv, void * ptr, bool managed) {
     warn("Line: %d", __LINE__);
 
     MAGIC * mg;
@@ -180,7 +179,7 @@ void pin(pTHX_ arena_t * type_arena, ffi_type * type, SV * sv, void * ptr, bool 
  * This function performs the following steps:
  * 1. Loads the specified dynamic library.
  * 2. Finds the address of the global variable (symbol) within that library.
- * 3. Uses the `infix` signature parser to create an `ffi_type` object graph from
+ * 3. Uses the `infix` signature parser to create an `infix_type` object graph from
  *    the signature string. This creates an arena to hold the type.
  * 4. Calls the internal `pin()` function to attach magic to the Perl scalar,
  *    linking it to the symbol's address and storing the type information.
@@ -204,18 +203,18 @@ XS_INTERNAL(Affix_pin) {
         croak("Failed to find symbol '%s' in %s", symbol, SvPV_nolen(ST(1)));
     warn("Line: %d", __LINE__);
 
-    // 2. Create the ffi_type from the signature string
+    // 2. Create the infix_type from the signature string
     const char * signature = SvPV_nolen(ST(3));
-    arena_t * type_arena = NULL;
-    ffi_type * type = NULL;
+    infix_arena_t * type_arena = NULL;
+    infix_type * type = NULL;
     warn("Line: %d", __LINE__);
 
-    ffi_status status = ffi_type_from_signature(&type, &type_arena, signature);
+    infix_status status = infix_type_from_signature(&type, &type_arena, signature);
     warn("Line: %d", __LINE__);
 
-    if (status != FFI_SUCCESS || type == NULL) {
+    if (status != INFIX_SUCCESS || type == NULL) {
         if (type_arena)
-            arena_destroy(type_arena);
+            infix_arena_destroy(type_arena);
         croak("Failed to parse pin signature: '%s'", signature);
     }
     warn("Line: %d", __LINE__);

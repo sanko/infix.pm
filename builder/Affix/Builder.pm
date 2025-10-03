@@ -244,10 +244,14 @@ use %s;
                 linenumbers  => 1,
                 optimize     => 1,
                 prototypes   => 1,
-                die_on_error => 0,
+                die_on_error => 0
             );
         }
-        for my $source ( find( qr/\.c$/, $cwd->child('lib') ) ) {
+        for my $source (
+
+            #~ find( qr/\.c$/, $cwd->child('lib') )
+            $cwd->child('lib/Affix.c')
+        ) {
             warn $source;
             my $cxx       = $source =~ /cx+$/;
             my $file_base = $source->basename(qr[.c$]);

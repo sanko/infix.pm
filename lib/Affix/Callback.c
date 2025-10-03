@@ -20,23 +20,20 @@
  * @details This is the C function that the JIT-compiled stub calls. Its job is
  *          to bridge the gap between the native C call and the Perl world.
  *
- * @param context A pointer to the `ffi_reverse_trampoline_t` context. We
- *                retrieve our own `Affix_CallbackCtx` from its `user_data`.
+ * @param context A pointer to the `infix_context_t` context. We
+ *                retrieve our own `Affix_Callback_Data` from its `user_data`.
  * @param return_value_ptr A pointer to a C buffer for the return value.
  * @param args_array An array of `void*` pointers to the C arguments.
  */
-void _Affix_callback_handler(ffi_reverse_trampoline_t * context, void * return_value_ptr, void ** args_array) {
+void _Affix_callback_handler(infix_context_t * context, void * return_value_ptr, void ** args_array) {
     warn("In handler. ret ptr: %p", return_value_ptr);
     if (context == NULL)
         croak("null");
     else
         warn("not null");
-    //~ void * blah = ffi_reverse_trampoline_get_user_data(context);
-    //~ if (blah != NULL)
-    //~ croak("hi");
-    //~ DumpHex(blah, 16);
+
     // 1. Retrieve our context and set the interpreter context for this thread.
-    Affix_Callback * ctx = (Affix_Callback *)ffi_reverse_trampoline_get_user_data(context);
+    Affix_Callback_Data * ctx = (Affix_Callback_Data *)infix_reverse_get_user_data(context);
     warn("Line: %d, File: %s", __LINE__, __FILE__);
     if (!ctx->perl)
         croak("Fuck");
@@ -69,12 +66,11 @@ void _Affix_callback_handler(ffi_reverse_trampoline_t * context, void * return_v
     warn("Line: %d, File: %s", __LINE__, __FILE__);
 
     // 5. Marshal the return value from Perl back to the C buffer.
-    if (ctx->return_type->category != FFI_TYPE_VOID) {
+    if (ctx->return_type->category != INFIX_TYPE_VOID) {
         warn("Line: %d, File: %s", __LINE__, __FILE__);
 
         if (count != 1) {
             warn("Line: %d, File: %s", __LINE__, __FILE__);
-            //~ Newxz(return_value_ptr, 1, SV);
             // If Perl returns an empty list, we return a zeroed-out value.
             memset(return_value_ptr, 0, ctx->return_type->size);
         }
@@ -113,22 +109,28 @@ XS_INTERNAL(Affix_callback) {
     const char * signature = SvPV_nolen(ST(1));
 
     // 1. Parse the callback's signature.
-    arena_t * arena = NULL;
-    ffi_type * ret_type = NULL;
-    ffi_type ** arg_types = NULL;
+    infix_arena_t * arena = NULL;
+    infix_type * ret_type = NULL;
+    infix_function_argument * args = NULL;
     size_t num_args = 0;
     size_t num_fixed_args = 0;  // TODO: Support variadic callbacks later
 
-    ffi_status status = ffi_signature_parse(signature, &arena, &ret_type, &arg_types, &num_args, &num_fixed_args);
-    if (status != FFI_SUCCESS) {
+    infix_status status = infix_signature_parse(signature, &arena, &ret_type, &args, &num_args, &num_fixed_args);
+    if (status != INFIX_SUCCESS) {
         if (arena)
-            arena_destroy(arena);
+            infix_arena_destroy(arena);
         croak("Failed to parse callback signature: '%s'", signature);
     }
 
+    // Extract just the types from the parsed arguments
+    const infix_type ** arg_types = (const infix_type **)safemalloc(sizeof(infix_type *) * num_args);
+    for (size_t i = 0; i < num_args; ++i) {
+        arg_types[i] = args[i].type;
+    }
+
     // 2. Create our persistent context struct.
-    Affix_Callback * ctx;
-    Newxz(ctx, 1, Affix_Callback);
+    Affix_Callback_Data * ctx;
+    Newxz(ctx, 1, Affix_Callback_Data);
     storeTHX(ctx->perl);
     ctx->perl_sub = newSVsv(sub);  // Increment refcount
     ctx->return_type = ret_type;
@@ -136,27 +138,29 @@ XS_INTERNAL(Affix_callback) {
     ctx->num_args = num_args;
 
     // 3. Generate the reverse trampoline.
-    ffi_reverse_trampoline_t * rt = NULL;
+    infix_reverse_t * rt = NULL;
     warn("SETTING UP CALLBACK!!!!!!!!!!! line %d", __LINE__);
-    status = generate_reverse_trampoline(
-        &rt, ret_type, arg_types, num_args, num_fixed_args, (void *)_Affix_callback_handler, ctx);
+    status = infix_reverse_create_manual(
+        &rt, ret_type, (infix_type **)arg_types, num_args, num_fixed_args, (void *)_Affix_callback_handler, ctx);
 
-    // The arena is now owned by the trampoline context, we don't destroy it here.
+    // The temporary arena from parsing can now be destroyed.
+    infix_arena_destroy(arena);
 
-    if (status != FFI_SUCCESS) {
+    if (status != INFIX_SUCCESS) {
         SvREFCNT_dec(ctx->perl_sub);
+        safefree(arg_types);
         safefree(ctx);
         croak("Failed to generate reverse trampoline for signature: '%s'", signature);
     }
 
     // 4. Wrap the resulting native function pointer in an Affix::Pointer object.
-    void * func_ptr = ffi_trampoline_get_code((ffi_forward_t *)rt);  // HACK: cast is okay here
+    void * func_ptr = infix_reverse_get_code(rt);
 
     Affix_Pointer * ptr_struct;
     Newxz(ptr_struct, 1, Affix_Pointer);
     ptr_struct->address = func_ptr;
-    ptr_struct->managed = 0;                       // The trampoline owns this memory, not us.
-    ptr_struct->type = ffi_type_create_pointer();  // Type is just a generic pointer
+    ptr_struct->managed = 0;                                       // The trampoline owns this memory, not us.
+    ptr_struct->type = (infix_type *)infix_type_create_pointer();  // Type is just a generic pointer
     ptr_struct->type_arena = NULL;
     ptr_struct->count = 1;
     ptr_struct->position = 0;

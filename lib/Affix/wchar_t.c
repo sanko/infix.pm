@@ -29,7 +29,7 @@
  * @return A new Perl SV* containing the equivalent UTF-8 string. The SV is mortal.
  */
 SV * wchar2utf(pTHX_ wchar_t * src, size_t len) {
-#if defined(FFI_OS_WINDOWS)
+#if defined(INFIX_OS_WINDOWS)
     // Windows uses UTF-16 for wchar_t.
     // First, determine the required buffer size for the UTF-8 string.
     int outlen = WideCharToMultiByte(CP_UTF8, 0, src, len, NULL, 0, NULL, NULL);
@@ -72,7 +72,7 @@ wchar_t * utf2wchar(pTHX_ SV * src, size_t len) {
     if (!RETVAL)
         return NULL;
 
-#if defined(FFI_OS_WINDOWS)
+#if defined(INFIX_OS_WINDOWS)
     // On Windows, convert from UTF-8 to UTF-16.
     const char * utf8_str = SvPV_nolen(src);
     int ret = MultiByteToWideChar(CP_UTF8, 0, utf8_str, len, RETVAL, len + 1);

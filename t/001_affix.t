@@ -24,8 +24,8 @@ DLLEXPORT int run_callback(int_callback_t cb, int value) {
 
         # The C function that will execute our callback
         #~ my $run_callback = affix $lib, 'run_callback', '(i=>i)*,i=>i', undef;
-        ok my $run_callback = affix $lib, 'run_callback', '(i=>i),i=>i';
-        is run_callback( sub { warn 'Hi!'; return 100 }, 4 ), 4, 'run_callback(...)';
+        ok my $run_callback = affix $lib, 'run_callback', '(((int32)->int32),int32)->int32';
+        is run_callback( sub { warn 'Hi!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'; return 100 }, 4 ), 4, 'run_callback(...)';
         diag 'here';
 
         # Create a native C function pointer from our Perl sub

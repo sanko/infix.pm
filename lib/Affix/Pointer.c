@@ -13,7 +13,7 @@
  *
  * The key change is the removal of the old `store` and `fetch` methods, as
  * data marshalling is now handled by a new, centralized system that uses
- * `infix`'s `ffi_type` descriptors.
+ * `infix`'s `infix_type` descriptors.
  */
 
 #include "../Affix.h"
@@ -78,17 +78,17 @@ XS_INTERNAL(Affix_Pointer_new) {
     const char * signature = SvPV_nolen(ST(1));
     size_t count = SvUV(ST(2));
 
-    arena_t * type_arena = NULL;
-    ffi_type * type = NULL;
+    infix_arena_t * type_arena = NULL;
+    infix_type * type = NULL;
 
-    ffi_status status = ffi_type_from_signature(&type, &type_arena, signature);
-    if (status != FFI_SUCCESS || !type) {
+    infix_status status = infix_type_from_signature(&type, &type_arena, signature);
+    if (status != INFIX_SUCCESS || !type) {
         if (type_arena)
-            arena_destroy(type_arena);
+            infix_arena_destroy(type_arena);
         croak("Failed to parse type signature for Affix::Pointer->new: '%s'", signature);
     }
     if (type->size == 0) {  // e.g. for 'void'
-        arena_destroy(type_arena);
+        infix_arena_destroy(type_arena);
         croak("Cannot create a pointer to a type of size 0");
     }
 
@@ -152,17 +152,17 @@ XS_INTERNAL(Affix_Pointer_cast) {
         croak("Cannot cast a pointer whose original type has size 0 (e.g., void*)");
 
     const char * new_signature = SvPV_nolen(ST(1));
-    arena_t * new_arena = NULL;
-    ffi_type * new_type = NULL;
-    ffi_status status = ffi_type_from_signature(&new_type, &new_arena, new_signature);
+    infix_arena_t * new_arena = NULL;
+    infix_type * new_type = NULL;
+    infix_status status = infix_type_from_signature(&new_type, &new_arena, new_signature);
 
-    if (status != FFI_SUCCESS || !new_type) {
+    if (status != INFIX_SUCCESS || !new_type) {
         if (new_arena)
-            arena_destroy(new_arena);
+            infix_arena_destroy(new_arena);
         croak("Failed to parse new type signature for cast: '%s'", new_signature);
     }
     if (new_type->size == 0) {
-        arena_destroy(new_arena);
+        infix_arena_destroy(new_arena);
         croak("Cannot cast to a type of size 0 (e.g., void)");
     }
 
@@ -206,8 +206,8 @@ XS_INTERNAL(Affix_Pointer_malloc) {
     Newxz(ptr_struct, 1, Affix_Pointer);
     ptr_struct->address = ptr;
     ptr_struct->managed = 1;
-    ptr_struct->type = ffi_type_create_primitive(FFI_PRIMITIVE_TYPE_UINT8);  // Treat as bytes
-    ptr_struct->type_arena = NULL;                                           // Type is static, no arena needed
+    ptr_struct->type = infix_type_create_primitive(INFIX_PRIMITIVE_UINT8);  // Treat as bytes
+    ptr_struct->type_arena = NULL;                                          // Type is static, no arena needed
     ptr_struct->count = size;
     ptr_struct->position = 0;
 
@@ -235,7 +235,7 @@ XS_INTERNAL(Affix_Pointer_calloc) {
     Newxz(ptr_struct, 1, Affix_Pointer);
     ptr_struct->address = ptr;
     ptr_struct->managed = 1;
-    ptr_struct->type = ffi_type_create_primitive(FFI_PRIMITIVE_TYPE_UINT8);
+    ptr_struct->type = infix_type_create_primitive(INFIX_PRIMITIVE_UINT8);
     ptr_struct->type_arena = NULL;
     ptr_struct->count = num * size;
     ptr_struct->position = 0;
@@ -384,7 +384,7 @@ XS_INTERNAL(Affix_Pointer_memchr) {
     Newxz(ptr_struct, 1, Affix_Pointer);
     ptr_struct->address = result_ptr;
     ptr_struct->managed = 0;  // This is a VIEW, do not free it.
-    ptr_struct->type = ffi_type_create_primitive(FFI_PRIMITIVE_TYPE_UINT8);
+    ptr_struct->type = infix_type_create_primitive(INFIX_PRIMITIVE_UINT8);
     ptr_struct->type_arena = NULL;
     ptr_struct->count = 1;  // It points to one char
     ptr_struct->position = 0;
@@ -413,7 +413,7 @@ XS_INTERNAL(Affix_Pointer_strdup) {
     Newxz(ptr_struct, 1, Affix_Pointer);
     ptr_struct->address = new_str;
     ptr_struct->managed = 1;  // We own this memory
-    ptr_struct->type = ffi_type_create_primitive(FFI_PRIMITIVE_TYPE_SINT8);
+    ptr_struct->type = infix_type_create_primitive(INFIX_PRIMITIVE_SINT8);
     ptr_struct->type_arena = NULL;
     ptr_struct->count = strlen(new_str) + 1;
     ptr_struct->position = 0;
@@ -602,7 +602,7 @@ XS_INTERNAL(Affix_Pointer_deref_list) {
     }
 
     AV * av = newAV();
-    ffi_type * elem_type = ptr_struct->type;
+    infix_type * elem_type = ptr_struct->type;
 
     for (size_t i = 0; i < ptr_struct->count; ++i) {
         void * elem_src = (char *)ptr_struct->address + (i * elem_type->size);
@@ -632,12 +632,12 @@ XS_INTERNAL(Affix_Pointer_deref_hash) {
     }
 
     // This operation is only valid if the pointer is typed as a struct.
-    if (ptr_struct->type->category != FFI_TYPE_STRUCT)
+    if (ptr_struct->type->category != INFIX_TYPE_STRUCT)
         croak("Cannot dereference pointer as a hash unless it is typed as a struct");
 
     HV * hash = newHV();
     for (size_t i = 0; i < ptr_struct->type->meta.aggregate_info.num_members; ++i) {
-        ffi_struct_member * affix_member = &ptr_struct->type->meta.aggregate_info.members[i];
+        infix_struct_member * affix_member = &ptr_struct->type->meta.aggregate_info.members[i];
 
         // A member must have a name to be a hash key.
         if (affix_member->name) {
@@ -698,7 +698,7 @@ XS_INTERNAL(Affix_Pointer_DESTROY) {
         safefree(ptr_struct->address);  // Free the C memory if we own it
 
     if (ptr_struct->type_arena)
-        arena_destroy(ptr_struct->type_arena);
+        infix_arena_destroy(ptr_struct->type_arena);
 
     safefree(ptr_struct);  // Free the wrapper struct itself
 
@@ -722,7 +722,7 @@ XS_INTERNAL(Affix_Pointer_Unmanaged_DESTROY) {
     // DO NOT free ptr_struct->address, as we do not own it.
 
     if (ptr_struct->type_arena) {
-        arena_destroy(ptr_struct->type_arena);
+        infix_arena_destroy(ptr_struct->type_arena);
     }
     safefree(ptr_struct);  // Free the wrapper struct itself
     sv_setiv(SvRV(ST(0)), 0);

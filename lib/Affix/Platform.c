@@ -23,7 +23,7 @@
 #define ALIGNOF_(t) _Alignof(t)
 
 // Helper macro to reduce boilerplate when exporting boolean flags.
-#ifdef FFI_DEBUG_ENABLED  // Use a generic check that infix might provide
+#ifdef INFIX_DEBUG_ENABLED  // Use a generic check that infix might provide
 #define EXPORT_PLATFORM_BOOL(name, macro) register_constant("Affix::Platform", name, boolSV(true))
 #else
 #define EXPORT_PLATFORM_BOOL(name, macro) register_constant("Affix::Platform", name, boolSV(false))
@@ -83,60 +83,60 @@ void boot_Affix_Platform(pTHX_ CV * cv) {
 
     // Determine platform strings using infix's detection macros
     const char * os =
-#if defined(FFI_OS_LINUX)
+#if defined(INFIX_OS_LINUX)
         "Linux";
-#elif defined(FFI_OS_WINDOWS)
+#elif defined(INFIX_OS_WINDOWS)
         "Windows";
-#elif defined(FFI_OS_MACOS)
+#elif defined(INFIX_OS_MACOS)
         "macOS";
-#elif defined(FFI_OS_IOS)
+#elif defined(INFIX_OS_IOS)
         "iOS";
-#elif defined(FFI_OS_ANDROID)
+#elif defined(INFIX_OS_ANDROID)
         "Android";
-#elif defined(FFI_OS_TERMUX)
+#elif defined(INFIX_OS_TERMUX)
         "Termux";
-#elif defined(FFI_OS_FREEBSD)
+#elif defined(INFIX_OS_FREEBSD)
         "FreeBSD";
-#elif defined(FFI_OS_OPENBSD)
+#elif defined(INFIX_OS_OPENBSD)
         "OpenBSD";
-#elif defined(FFI_OS_NETBSD)
+#elif defined(INFIX_OS_NETBSD)
         "NetBSD";
-#elif defined(FFI_OS_DRAGONFLY)
+#elif defined(INFIX_OS_DRAGONFLY)
         "DragonFly BSD"
-#elif defined(FFI_OS_SOLARIS)
+#elif defined(INFIX_OS_SOLARIS)
         "Solaris"
-#elif defined(FFI_OS_HAIKU)
+#elif defined(INFIX_OS_HAIKU)
         "Haiku"
 #else
         "Unknown";
 #endif
 
     const char * architecture =
-#if defined(FFI_ARCH_X64)
+#if defined(INFIX_ARCH_X64)
         "x86_64";
-#elif defined(FFI_ARCH_AARCH64)
+#elif defined(INFIX_ARCH_AARCH64)
         "ARM64";
 #else
         "Unknown";
 #endif
 
     const char * compiler =
-#if defined(FFI_COMPILER_CLANG)
+#if defined(INFIX_COMPILER_CLANG)
         "Clang";
-#elif defined(FFI_COMPILER_GCC)
+#elif defined(INFIX_COMPILER_GCC)
         "GCC";
-#elif defined(FFI_COMPILER_MSVC)
+#elif defined(INFIX_COMPILER_MSVC)
         "MSVC";
 #else
             "Unknown";
 #endif
 
     const char * abi =
-#if defined(FFI_ABI_WINDOWS_X64)
+#if defined(INFIX_ABI_WINDOWS_X64)
         "Windows x64";
-#elif defined(FFI_ABI_SYSV_X64)
+#elif defined(INFIX_ABI_SYSV_X64)
         "System V AMD64";
-#elif defined(FFI_ABI_AAPCS64)
+#elif defined(INFIX_ABI_AAPCS64)
         "AAPCS64";
 #else
         "Unknown";
@@ -148,45 +148,45 @@ void boot_Affix_Platform(pTHX_ CV * cv) {
     register_constant("Affix::Platform", "ABI", newSVpv(abi, 0));
 
     // Export boolean flags for easier checking in Perl
-    EXPORT_PLATFORM_BOOL("Linux", FFI_OS_LINUX);
-    EXPORT_PLATFORM_BOOL("Windows", FFI_OS_WINDOWS);
-    EXPORT_PLATFORM_BOOL("macOS", FFI_OS_MACOS);
-    EXPORT_PLATFORM_BOOL("iOS", FFI_OS_IOS);  // Ha!
-    EXPORT_PLATFORM_BOOL("Android", FFI_OS_ANDROID);
-    EXPORT_PLATFORM_BOOL("FreeBSD", FFI_OS_FREEBSD);
-    EXPORT_PLATFORM_BOOL("OpenBSD", FFI_OS_OPENBSD);
-    EXPORT_PLATFORM_BOOL("NetBSD", FFI_OS_NETBSD);
-    EXPORT_PLATFORM_BOOL("DragonFlyBSD", FFI_OS_DRAGONFLY);
-    EXPORT_PLATFORM_BOOL("Solaris", FFI_OS_SOLARIS);
-    EXPORT_PLATFORM_BOOL("Haiku", FFI_OS_HAIKU);
+    EXPORT_PLATFORM_BOOL("Linux", INFIX_OS_LINUX);
+    EXPORT_PLATFORM_BOOL("Windows", INFIX_OS_WINDOWS);
+    EXPORT_PLATFORM_BOOL("macOS", INFIX_OS_MACOS);
+    EXPORT_PLATFORM_BOOL("iOS", INFIX_OS_IOS);  // Ha!
+    EXPORT_PLATFORM_BOOL("Android", INFIX_OS_ANDROID);
+    EXPORT_PLATFORM_BOOL("FreeBSD", INFIX_OS_FREEBSD);
+    EXPORT_PLATFORM_BOOL("OpenBSD", INFIX_OS_OPENBSD);
+    EXPORT_PLATFORM_BOOL("NetBSD", INFIX_OS_NETBSD);
+    EXPORT_PLATFORM_BOOL("DragonFlyBSD", INFIX_OS_DRAGONFLY);
+    EXPORT_PLATFORM_BOOL("Solaris", INFIX_OS_SOLARIS);
+    EXPORT_PLATFORM_BOOL("Haiku", INFIX_OS_HAIKU);
 
     // 64bit
-    EXPORT_PLATFORM_BOOL("ARCH_x86_64", FFI_ARCH_X64);
-    EXPORT_PLATFORM_BOOL("ARCH_ARM64", FFI_ARCH_AARCH64);
+    EXPORT_PLATFORM_BOOL("ARCH_x86_64", INFIX_ARCH_X64);
+    EXPORT_PLATFORM_BOOL("ARCH_ARM64", INFIX_ARCH_AARCH64);
     // 32bit (no support... yet?)
-    EXPORT_PLATFORM_BOOL("ARCH_x86", FFI_ARCH_X86);
-    EXPORT_PLATFORM_BOOL("ARCH_ARM", FFI_ARCH_ARM);
+    EXPORT_PLATFORM_BOOL("ARCH_x86", INFIX_ARCH_X86);
+    EXPORT_PLATFORM_BOOL("ARCH_ARM", INFIX_ARCH_ARM);
 
     /* TODO:
      * Application Binary Interface (ABI):
-     * - FFI_ABI_WINDOWS_X64:  Microsoft x64 Calling Convention
-     * - FFI_ABI_SYSV_X64:     System V AMD64 ABI
-     * - FFI_ABI_AAPCS64:      ARM 64-bit Procedure Call Standard
+     * - INFIX_ABI_WINDOWS_X64:  Microsoft x64 Calling Convention
+     * - INFIX_ABI_SYSV_X64:     System V AMD64 ABI
+     * - INFIX_ABI_AAPCS64:      ARM 64-bit Procedure Call Standard
      *
      * Compiler:
-     * - FFI_COMPILER_MSVC:    Microsoft Visual C++
-     * - FFI_COMPILER_CLANG:   Clang
-     * - FFI_COMPILER_GCC:     GNU Compiler Collection
-     * - FFI_COMPILER_INTEL:   Intel C/C++ Compiler
-     * - FFI_COMPILER_IBM:     IBM XL C/C++
-     * - FFI_COMPILER_NFI:     Unknown compiler
+     * - INFIX_COMPILER_MSVC:    Microsoft Visual C++
+     * - INFIX_COMPILER_CLANG:   Clang
+     * - INFIX_COMPILER_GCC:     GNU Compiler Collection
+     * - INFIX_COMPILER_INTEL:   Intel C/C++ Compiler
+     * - INFIX_COMPILER_IBM:     IBM XL C/C++
+     * - INFIX_COMPILER_NFI:     Unknown compiler
      *
      * Environment:
-     * - FFI_ENV_POSIX:         Defined for POSIX-compliant systems (macOS, Linux, BSDs, etc.)
-     * - FFI_ENV_MSYS:         MSYS/MSYS2 build environment
-     * - FFI_ENV_CYGWIN:       Cygwin environment
-     * - FFI_ENV_MINGW:        MinGW/MinGW-w64 compilers
-     * - FFI_ENV_TERMUX:       Termux running on Android or Chrome OS
+     * - INFIX_ENV_POSIX:         Defined for POSIX-compliant systems (macOS, Linux, BSDs, etc.)
+     * - INFIX_ENV_MSYS:         MSYS/MSYS2 build environment
+     * - INFIX_ENV_CYGWIN:       Cygwin environment
+     * - INFIX_ENV_MINGW:        MinGW/MinGW-w64 compilers
+     * - INFIX_ENV_TERMUX:       Termux running on Android or Chrome OS
      *
      */
 
