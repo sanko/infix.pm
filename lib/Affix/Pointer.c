@@ -489,7 +489,7 @@ XS_INTERNAL(Affix_Pointer_FETCH) {
     }
 
     void * elem_addr = (char *)ptr_struct->address + (index * ptr_struct->type->size);
-    ST(0) = fetch_c_to_sv(aTHX_ elem_addr, ptr_struct->type);
+    ST(0) = ptr2sv(aTHX_ elem_addr, ptr_struct->type);
     XSRETURN(1);
 }
 /**
@@ -511,7 +511,7 @@ XS_INTERNAL(Affix_Pointer_get) {
     }
 
     void * elem_addr = (char *)ptr_struct->address + (index * ptr_struct->type->size);
-    ST(0) = fetch_c_to_sv(aTHX_ elem_addr, ptr_struct->type);
+    ST(0) = ptr2sv(aTHX_ elem_addr, ptr_struct->type);
     XSRETURN(1);
 }
 
@@ -579,7 +579,7 @@ XS_INTERNAL(Affix_Pointer_deref_scalar) {
     }
 
     void * elem_addr = (char *)ptr_struct->address + (ptr_struct->position * ptr_struct->type->size);
-    ST(0) = fetch_c_to_sv(aTHX_ elem_addr, ptr_struct->type);
+    ST(0) = ptr2sv(aTHX_ elem_addr, ptr_struct->type);
     XSRETURN(1);
 }
 
@@ -590,10 +590,8 @@ XS_INTERNAL(Affix_Pointer_deref_scalar) {
  */
 XS_INTERNAL(Affix_Pointer_deref_list) {
     dXSARGS;
-    warn("Line %d", __LINE__);
     if (items != 1)
         croak_xs_usage(cv, "$self");
-    warn("ARRAY!!!!!!!!!!!!!!!!!!!!!!!!");
 
     Affix_Pointer * ptr_struct = get_pointer_struct(aTHX_ ST(0));
     if (!ptr_struct || !ptr_struct->address) {
@@ -602,11 +600,11 @@ XS_INTERNAL(Affix_Pointer_deref_list) {
     }
 
     AV * av = newAV();
-    infix_type * elem_type = ptr_struct->type;
+    const infix_type * elem_type = ptr_struct->type; // CORRECTED: Added 'const'
 
     for (size_t i = 0; i < ptr_struct->count; ++i) {
         void * elem_src = (char *)ptr_struct->address + (i * elem_type->size);
-        SV * elem_sv = fetch_c_to_sv(aTHX_ elem_src, elem_type);
+        SV * elem_sv = ptr2sv(aTHX_ elem_src, elem_type);
         av_push(av, elem_sv);
     }
 
@@ -642,7 +640,7 @@ XS_INTERNAL(Affix_Pointer_deref_hash) {
         // A member must have a name to be a hash key.
         if (affix_member->name) {
             void * member_src = (char *)ptr_struct->address + affix_member->offset;
-            SV * val_sv = fetch_c_to_sv(aTHX_ member_src, affix_member->type);
+            SV * val_sv = ptr2sv(aTHX_ member_src, affix_member->type);
             hv_store(hash, affix_member->name, strlen(affix_member->name), val_sv, 0);
         }
     }

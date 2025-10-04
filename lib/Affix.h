@@ -117,8 +117,9 @@ typedef infix_forward_t * Affix;
 
 // --- Internal struct to hold trampoline and symbol ---
 typedef struct {
-    Affix trampoline;  // Affix is typedef'd to infix_forward_t*
+    Affix trampoline;
     void * symbol;
+    AV* owned_callbacks; // CORRECTED: This member was missing from the definition.
 } Affix_Context;
 
 
@@ -134,7 +135,7 @@ typedef struct {
     void * address;
     /// @brief An infix `infix_type` that describes the data for a SINGLE ELEMENT
     /// that this pointer is pointing to. Used for offset calculations and dereferencing.
-    infix_type * type;
+    const infix_type * type;
     /// @brief The arena that owns the `type` graph. This must be destroyed
     /// when the Affix_Pointer object is destroyed.
     infix_arena_t * type_arena;
@@ -161,7 +162,7 @@ typedef struct {
     /// @brief The raw pointer to the C data.
     void * pointer;
     /// @brief The infix_type that describes the C data, used for marshalling.
-    infix_type * type;
+    const infix_type * type;
     /// This is kept for proper memory management.
     infix_arena_t * type_arena;
     /// @brief If true, Affix is responsible for free()ing the pointer when the pin is destroyed.
@@ -180,12 +181,6 @@ typedef struct {
     SV * perl_sub;
     /// @brief The Perl interpreter context for thread safety
     dTHXfield(perl)
-        /// @brief The return type of the callback.
-        const infix_type * return_type;
-    /// @brief An array of types for the callback's arguments.
-    const infix_type ** arg_types;
-    /// @brief The number of arguments.
-    size_t num_args;
 } Affix_Callback_Data;
 
 // Affix.c - Core FFI logic & Library Loading
@@ -196,10 +191,10 @@ void * find_symbol(DLLib lib, const char * name);
 
 // marshal.c - Data conversion between Perl SVs and C types
 void marshal_sv_to_c(pTHX_ void * dest_c, SV * src_sv, const infix_type * type_info);
-SV * fetch_c_to_sv(pTHX_ void * src_c, const infix_type * type_info);
+SV * ptr2sv(pTHX_ void * src_c, const infix_type * type_info);
 
 // pin.c - Logic for tying SVs to C pointers
-void pin(pTHX_ infix_arena_t *, infix_type *, SV *, void *, bool);
+void pin(pTHX_ infix_arena_t *, const infix_type *, SV *, void *, bool);
 bool is_pin(pTHX_ SV *);
 Affix_Pin * get_pin(pTHX_ SV *);
 

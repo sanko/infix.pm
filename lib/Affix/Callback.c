@@ -26,67 +26,51 @@
  * @param args_array An array of `void*` pointers to the C arguments.
  */
 void _Affix_callback_handler(infix_context_t * context, void * return_value_ptr, void ** args_array) {
-    warn("In handler. ret ptr: %p", return_value_ptr);
-    if (context == NULL)
-        croak("null");
-    else
-        warn("not null");
-
     // 1. Retrieve our context and set the interpreter context for this thread.
     Affix_Callback_Data * ctx = (Affix_Callback_Data *)infix_reverse_get_user_data(context);
-    warn("Line: %d, File: %s", __LINE__, __FILE__);
-    if (!ctx->perl)
-        croak("Fuck");
+    if (!ctx || !ctx->perl) {
+        if (return_value_ptr) {
+            const infix_type* ret_type = infix_reverse_get_return_type(context);
+            if(ret_type) memset(return_value_ptr, 0, ret_type->size);
+        }
+        return;
+    }
+
     dTHXa(ctx->perl);
-    sv_dump(newSV(0));
-    warn("Line: %d, File: %s", __LINE__, __FILE__);
     dSP;
     int count;
-    warn("Line: %d, File: %s", __LINE__, __FILE__);
 
     // 2. Set up the Perl call stack.
     ENTER;
     SAVETMPS;
     PUSHMARK(SP);
-    EXTEND(SP, ctx->num_args);
-    warn("Line: %d, File: %s", __LINE__, __FILE__);
 
     // 3. Marshal C arguments to Perl SVs and push them onto the stack.
-    for (size_t i = 0; i < ctx->num_args; i++) {
-        SV * arg_sv = fetch_c_to_sv(aTHX_ args_array[i], ctx->arg_types[i]);
-        sv_dump(arg_sv);
-        mPUSHs((arg_sv));
+    size_t num_args = infix_reverse_get_num_args(context);
+    EXTEND(SP, num_args);
+
+    for (size_t i = 0; i < num_args; i++) {
+        const infix_type * type_info = infix_reverse_get_arg_type(context, i);
+        SV * arg_sv = ptr2sv(aTHX_ args_array[i], type_info);
+        PUSHs(arg_sv); // ptr2sv now returns a mortal SV
     }
     PUTBACK;
-    warn("Line: %d, File: %s", __LINE__, __FILE__);
 
     // 4. Call the Perl subroutine.
     count = call_sv(ctx->perl_sub, G_SCALAR);
     SPAGAIN;
-    warn("Line: %d, File: %s", __LINE__, __FILE__);
 
     // 5. Marshal the return value from Perl back to the C buffer.
-    if (ctx->return_type->category != INFIX_TYPE_VOID) {
-        warn("Line: %d, File: %s", __LINE__, __FILE__);
-
+    const infix_type* return_type = infix_reverse_get_return_type(context);
+    if (return_type->category != INFIX_TYPE_VOID) {
         if (count != 1) {
-            warn("Line: %d, File: %s", __LINE__, __FILE__);
             // If Perl returns an empty list, we return a zeroed-out value.
-            memset(return_value_ptr, 0, ctx->return_type->size);
-        }
-        else {
-            warn("Line: %d, File: %s", __LINE__, __FILE__);
-
+            memset(return_value_ptr, 0, return_type->size);
+        } else {
             SV * return_sv = POPs;
-            warn("Line: %d, File: %s", __LINE__, __FILE__);
-
-            marshal_sv_to_c(aTHX_ return_value_ptr, return_sv, ctx->return_type);
-            DumpHex(return_value_ptr, 16);
-            DumpHex(*(void **)return_value_ptr, 16);
-            warn("Line: %d, File: %s", __LINE__, __FILE__);
+            marshal_sv_to_c(aTHX_ return_value_ptr, return_sv, return_type);
         }
     }
-    warn("Line: %d, File: %s", __LINE__, __FILE__);
 
     PUTBACK;
     FREETMPS;
@@ -108,12 +92,12 @@ XS_INTERNAL(Affix_callback) {
     }
     const char * signature = SvPV_nolen(ST(1));
 
-    // 1. Parse the callback's signature.
+    // 1. Parse the callback's signature into a temporary arena.
     infix_arena_t * arena = NULL;
     infix_type * ret_type = NULL;
     infix_function_argument * args = NULL;
     size_t num_args = 0;
-    size_t num_fixed_args = 0;  // TODO: Support variadic callbacks later
+    size_t num_fixed_args = 0;
 
     infix_status status = infix_signature_parse(signature, &arena, &ret_type, &args, &num_args, &num_fixed_args);
     if (status != INFIX_SUCCESS) {
@@ -123,32 +107,33 @@ XS_INTERNAL(Affix_callback) {
     }
 
     // Extract just the types from the parsed arguments
-    const infix_type ** arg_types = (const infix_type **)safemalloc(sizeof(infix_type *) * num_args);
+    infix_type ** arg_types = infix_arena_alloc(arena, sizeof(infix_type *) * num_args, _Alignof(infix_type *));
+    if (num_args > 0 && !arg_types) {
+        infix_arena_destroy(arena);
+        croak("Failed to allocate memory for argument types");
+    }
     for (size_t i = 0; i < num_args; ++i) {
-        arg_types[i] = args[i].type;
+        arg_types[i] = args[i].type; // CORRECTED: Changed -> to .
     }
 
-    // 2. Create our persistent context struct.
+    // 2. Create our persistent user context.
     Affix_Callback_Data * ctx;
     Newxz(ctx, 1, Affix_Callback_Data);
     storeTHX(ctx->perl);
     ctx->perl_sub = newSVsv(sub);  // Increment refcount
-    ctx->return_type = ret_type;
-    ctx->arg_types = arg_types;
-    ctx->num_args = num_args;
 
-    // 3. Generate the reverse trampoline.
+    // 3. Generate the reverse trampoline. It will deep-copy the types.
     infix_reverse_t * rt = NULL;
-    warn("SETTING UP CALLBACK!!!!!!!!!!! line %d", __LINE__);
     status = infix_reverse_create_manual(
-        &rt, ret_type, (infix_type **)arg_types, num_args, num_fixed_args, (void *)_Affix_callback_handler, ctx);
+        &rt, ret_type, arg_types, num_args, num_fixed_args, (void *)_Affix_callback_handler, ctx);
 
-    // The temporary arena from parsing can now be destroyed.
+    // The temporary parsing arena is no longer needed. The reverse trampoline
+    // has its own self-contained copy of the type info.
     infix_arena_destroy(arena);
 
     if (status != INFIX_SUCCESS) {
         SvREFCNT_dec(ctx->perl_sub);
-        safefree(arg_types);
+        // arg_types was in the destroyed arena
         safefree(ctx);
         croak("Failed to generate reverse trampoline for signature: '%s'", signature);
     }
@@ -159,8 +144,8 @@ XS_INTERNAL(Affix_callback) {
     Affix_Pointer * ptr_struct;
     Newxz(ptr_struct, 1, Affix_Pointer);
     ptr_struct->address = func_ptr;
-    ptr_struct->managed = 0;                                       // The trampoline owns this memory, not us.
-    ptr_struct->type = (infix_type *)infix_type_create_pointer();  // Type is just a generic pointer
+    ptr_struct->managed = 0; // The reverse trampoline context owns this memory.
+    ptr_struct->type = (infix_type *)infix_type_create_pointer();
     ptr_struct->type_arena = NULL;
     ptr_struct->count = 1;
     ptr_struct->position = 0;

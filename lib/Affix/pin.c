@@ -40,7 +40,7 @@ void delete_pin(pTHX_ Affix_Pin * pin) {
 /**
  * @brief The magic 'get' handler. Called when a pinned Perl scalar is read.
  * @details It retrieves the `Affix_Pin` context, reads the C data from the
- *          pin's pointer, and uses the centralized `fetch_c_to_sv` marshaller
+ *          pin's pointer, and uses the centralized `ptr2sv` marshaller
  *          to convert that data into a new Perl SV.
  * @return 0 on success.
  */
@@ -58,7 +58,7 @@ int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg) {
     warn("Line: %d", __LINE__);
 
     // Delegate to the centralized marshalling function.
-    SV * val = fetch_c_to_sv(aTHX_ pin->pointer, pin->type);
+    SV * val = ptr2sv(aTHX_ pin->pointer, pin->type);
     sv_setsv_mg(sv, val);
     warn("Line: %d, %p", __LINE__, pin->pointer);
 
@@ -143,9 +143,7 @@ Affix_Pin * get_pin(pTHX_ SV * sv) {
  * @param managed If true, the C pointer will be safefree'd when the pin is destroyed.
  * @note This function takes ownership of the arena associated with the infix_type.
  */
-void pin(pTHX_ infix_arena_t * type_arena, infix_type * type, SV * sv, void * ptr, bool managed) {
-    warn("Line: %d", __LINE__);
-
+void pin(pTHX_ infix_arena_t * type_arena, const infix_type * type, SV * sv, void * ptr, bool managed) {
     MAGIC * mg;
 
     if (is_pin(aTHX_ sv))
@@ -153,20 +151,15 @@ void pin(pTHX_ infix_arena_t * type_arena, infix_type * type, SV * sv, void * pt
     else
         mg = sv_magicext(sv, NULL, PERL_MAGIC_ext, &Affix_pin_vtbl, NULL, 0);
 
-    warn("Line: %d", __LINE__);
-
     Affix_Pin * pin;
     Newxz(pin, 1, Affix_Pin);
     pin->pointer = ptr;
     pin->managed = managed;
     pin->type_arena = type_arena;  // The pin now owns the arena.
     pin->type = type;
-    warn("Line: %d", __LINE__);
 
     mg->mg_ptr = (char *)pin;
     mg_magical(sv);
-    warn("Line: %d", __LINE__);
-    warn("Line: %d, %p", __LINE__, ptr);
 }
 
 // --- XSUBs ---

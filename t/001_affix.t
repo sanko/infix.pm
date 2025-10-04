@@ -13,19 +13,39 @@ subtest callback => sub {
 // ext: .c
 typedef int (*int_callback_t)(int); // A callback function pointer type
 DLLEXPORT int run_callback(int_callback_t cb, int value) {
-    warn("cb:    %p", cb);
-    warn("value: %d", value);
-    if (cb == NULL)
-        return -1;
+//return value*10;
+   if (cb == NULL)
+         return -1;
     // Call the provided function pointer and return its result.
-    return cb(value);
+    //return cb(value);
+    //warn("cb:    %p", cb);
+   // warn("?????????????????????????????????????? value: %d", value);
+    //if (cb == NULL)
+    //return -1;
+    // Call the provided function pointer and return its result.
+ //return
+ //cb(value);
+return value*10;
 }
 
 
         # The C function that will execute our callback
         #~ my $run_callback = affix $lib, 'run_callback', '(i=>i)*,i=>i', undef;
-        ok my $run_callback = affix $lib, 'run_callback', '(((int32)->int32),int32)->int32';
-        is run_callback( sub { warn 'Hi!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'; return 100 }, 4 ), 4, 'run_callback(...)';
+        ok my $run_callback = affix $lib, 'run_callback', '(((int32)->int32), int32)->int32';
+        is run_callback(
+            sub { my ($val) = @_;
+                # The callback itself can perform its own logic
+                return $val * 10;
+                use Carp;
+                Carp::cluck 'Hi';
+                use Data::Dump;
+                ddx \@_;
+                warn 'Hi!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!';
+                return 100;
+            },
+            4
+            ),
+            4, 'run_callback(...)';
         diag 'here';
 
         # Create a native C function pointer from our Perl sub
