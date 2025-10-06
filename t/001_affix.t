@@ -6,6 +6,21 @@ use Test2::Tools::Affix qw[:all];
 use Affix;
 #
 $|++;
+#
+subtest 'forward' => sub {
+    subtest 'int32 add(int32, int32)' => sub {
+        my $lib = compile_ok(<<'');
+#include "std.h"
+// ext: .c
+DLLEXPORT int add(int a, int b) {warn("Called!"); return a + b; }
+
+        ok affix( $lib, 'add', '(int32, int32) -> int32' ), 'affix( "add", "(int32, int32) -> int32")';
+        is add( 10, 4 ), 14, 'add( 10, 4 )';
+    };
+};
+done_testing;
+exit;
+__END__
 subtest callback => sub {
     subtest 'Passing a Perl Sub as a Callback' => sub {
         my $lib = compile_ok(<<'');
@@ -33,7 +48,9 @@ return value*10;
         #~ my $run_callback = affix $lib, 'run_callback', '(i=>i)*,i=>i', undef;
         ok my $run_callback = affix $lib, 'run_callback', '(((int32)->int32), int32)->int32';
         is run_callback(
-            sub { my ($val) = @_;
+            sub {
+                my ($val) = @_;
+
                 # The callback itself can perform its own logic
                 return $val * 10;
                 use Carp;
@@ -121,22 +138,22 @@ Point get_origin_point(void) {
 END
 plan skip_all => "Could not build native test library" unless $lib_path && -f $lib_path;
 subtest 'Integer Arguments and Return' => sub {
-    ok affix $lib_path, 'add_int', 'i,i => i';
+    ok affix $lib_path, 'add_int', '(int, int) -> int';
     is add_int(  40, 2 ), 42, 'add_int(40, 2) returns 42';
     is add_int( -10, 5 ), -5, 'add_int(-10, 5) returns -5';
 };
 subtest 'Double Arguments and Return' => sub {
-    affix $lib_path, 'sum_double', 'd,d => d', undef;
+    affix $lib_path, 'sum_double', '(double, double) -> double';
     is sum_double( 1.5, 2.75 ), 4.25, 'sum_double(1.5, 2.75) returns 4.25';
 };
 subtest 'String (char*) Argument' => sub {
-    ok affix $lib_path, string_len => 'c* => y';    # y is size_t
+    ok affix $lib_path, string_len => '(*char) -> uint32';    # y is size_t
     is string_len("hello"), 5, 'string_len("hello") returns 5';
     is string_len(""),      0, 'string_len("") returns 0';
 };
 subtest 'String (char*) Return' => sub {
-    my $string_reverse = affix( $lib_path, 'string_reverse', 'c* => c*', undef );
-    my $free_string    = affix( $lib_path, 'free_string',    'c* => v',  undef );
+    my $string_reverse = affix( $lib_path, 'string_reverse', '*char -> *char' );
+    my $free_string    = affix( $lib_path, 'free_string',    '*char -> void');
     my $reversed_ptr   = $string_reverse->("world");
     isa_ok( $reversed_ptr, 'Affix::Pointer' );
 

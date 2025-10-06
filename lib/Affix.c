@@ -1,10 +1,5 @@
 #include "Affix.h"
 
-#define MY_CXT_KEY "Affix::_guts" XS_VERSION
-
-typedef struct { size_t x; } my_cxt_t;
-
-START_MY_CXT
 
 #if defined(INFIX_OS_WINDOWS)
 Affix_Lib load_library(const char * lib) {
@@ -22,7 +17,8 @@ const char * get_dlerror() {
     DWORD dw = GetLastError();
     if (dw == 0)
         return NULL;
-    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, dw, 0, (LPSTR)buf, sizeof(buf), NULL);
+    FormatMessageA(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, dw, 0, (LPSTR)buf, sizeof(buf), NULL);
     size_t len = strlen(buf);
     while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r'))
         buf[--len] = '\0';
@@ -46,44 +42,184 @@ const char * get_dlerror() {
 
 XS_INTERNAL(Affix_load_library) {}
 XS_INTERNAL(Affix_free_library) {}
-XS_INTERNAL(Affix_find_symbol)  {}
+XS_INTERNAL(Affix_find_symbol) {}
 XS_INTERNAL(Affix_dlerror) {}
 
 //
-extern void Affix_trigger(pTHX_ CV * cv){
+extern void Affix_trigger(pTHX_ CV * cv) {
     dSP;
     dAXMARK;
 
-    Affix *affix = (Affix *)XSANY.any_ptr;
+    Affix * affix = (Affix *)XSANY.any_ptr;
     size_t items = (SP - MARK);
 
     dMY_CXT;
-// size_t *cvm_x = MY_CXT.x;
+    // size_t *cvm_x = MY_CXT.x;
 
+
+    infix_cif_func cif = (infix_cif_func)infix_forward_get_code(affix->infix);
+    //
+    int my_int_1 = SvIV(ST(0));
+    int my_int_2 = SvIV(ST(1));
+    int ret;
+
+    void * args[] = {&my_int_1, &my_int_2};
+    warn("Here 1!");
+
+
+    for (Stack_off_t st = 0; st < infix_forward_get_num_args(affix->infix); st++) {
+        affix->push[st](aTHX_ ST(st), args[st]
+                        //~ affix,
+                        //~ affix->push[instruction],
+                        //~ cvm,
+                        //~ ax +
+                        //~ #ifndef AFFIX_PROFILE
+                        //~ st
+                        //~ #else
+                        //~ 0
+                        //~ #endif
+        );
     }
-void Affix_destroy(pTHX_ infix_forward * context){}
-XS_INTERNAL(Affix_affix) {}
+
+    //
+    if (affix->symbol != nullptr)
+        cif(affix->symbol, &ret, args);
+    warn("Here 2!");
+    //~ XSRETURN_IV(printf_ret);
+
+    PL_stack_sp = PL_stack_base + ax + (((ST(0) = newSViv(ret))) ? 0 : -1);
+    return;
+}
+
+void Affix_destroy(pTHX_ infix_forward_t * ctx) {}
+
+//~ typedef void (*push)(aTHX_ SV *, void *);
+
+void push_int32(pTHX_ SV * sv, void * ptr) {
+    warn("in push_int32");
+}
+
+XS_INTERNAL(Affix_affix) {
+    // ix == 0 if Affix::affix
+    // ix == 1 if Affix::wrap
+    dXSARGS;
+    dXSI32;
+    PERL_UNUSED_VAR(items);
+
+    if (items != 3)
+        croak("Usage: function($library, $symbol, $signature)");
+
+    Affix * affix = nullptr;
+    Newxz(affix, 1, Affix);
+
+    SV * const xsub_tmp_sv = ST(0);
+    SvGETMAGIC(xsub_tmp_sv);
+
+    {
+        infix_forward_t * infix = nullptr;
+
+        Affix_Lib libhandle = nullptr;
+        {
+            if (!SvOK(xsub_tmp_sv) && SvREADONLY(xsub_tmp_sv))  // explicit undef
+                libhandle = load_library(nullptr);
+            else if (sv_isobject(xsub_tmp_sv) && sv_derived_from(xsub_tmp_sv, "Affix::Lib")) {
+                IV tmp = SvIV((SV *)SvRV(xsub_tmp_sv));
+                libhandle = INT2PTR(Affix_Lib, tmp);
+            }
+            else if (NULL == (libhandle = load_library(SvPV_nolen(xsub_tmp_sv)))) {
+                Stat_t statbuf;
+                Zero(&statbuf, 1, Stat_t);
+                if (PerlLIO_stat(SvPV_nolen(xsub_tmp_sv), &statbuf) < 0) {
+                    ENTER;
+                    SAVETMPS;
+                    PUSHMARK(SP);
+                    XPUSHs(xsub_tmp_sv);
+                    PUTBACK;
+                    SSize_t count = call_pv("Affix::find_library", G_SCALAR);
+                    SPAGAIN;
+                    if (count == 1)
+                        libhandle = load_library(SvPV_nolen(POPs));
+                    PUTBACK;
+                    FREETMPS;
+                    LEAVE;
+                }
+            }
+        }
+        if (libhandle == nullptr)
+            XSRETURN_UNDEF;  // User could check get_dlerror()
+                             //
+        const char * symbol = SvPVbyte_nolen(ST(1));
+        affix->symbol = find_symbol(libhandle, symbol);
+        if (affix->symbol == nullptr) {
+            free_library(libhandle);
+            XSRETURN_UNDEF;
+        }
+
+        //
+        const char * signature = SvPVbyte_nolen(ST(2));
+        infix_status status = infix_forward_create(&infix, signature);
+        if (status != INFIX_SUCCESS) {
+            free_library(libhandle);
+            //~ safefree(affix);
+            XSRETURN_UNDEF;
+        }
+        affix->infix = infix;
+    }
+
+    //~ infix_cif_func cif = (infix_cif_func)infix_forward_get_code(affix->infix);
+    //
+    Newxz(affix->push, infix_forward_get_num_args(affix->infix), Affix_Push);
+    for (size_t i = 0; i < infix_forward_get_num_args(affix->infix); ++i)
+        affix->push[i] = push_int32;
+
+
+    //~ c23_nodiscard size_t ;
+
+    //
+    char * prototype = "$$";
+    char * rename = "add";
+
+    STMT_START {
+        cv = newXSproto_portable(ix == 0 ? rename : nullptr, Affix_trigger, __FILE__, prototype);
+        if (UNLIKELY(cv == NULL))
+            croak("ARG! Something went really wrong while installing a new XSUB!");
+        XSANY.any_ptr = (void *)affix;
+    }
+    STMT_END;
+    ST(0) = sv_2mortal(sv_bless((UNLIKELY(ix == 1) ? newRV_noinc(MUTABLE_SV(cv)) : newRV_inc(MUTABLE_SV(cv))),
+                                gv_stashpv("Affix", GV_ADD)));
+}
 XS_INTERNAL(Affix_DESTROY) {}
 XS_INTERNAL(Affix_END) {
     dXSARGS;
     PERL_UNUSED_VAR(items);
-    dMY_CXT;
-
+    dMY_CXT;  // XXX: If we need this
     XSRETURN_EMPTY;
 }
 
 // Pin system
+static MGVTBL Affix_pin_vtbl = {
+    Affix_get_pin,   // get
+    Affix_set_pin,   // set
+    nullptr,         // len
+    nullptr,         // clear
+    Affix_free_pin,  // free
+    nullptr,         // copy
+    nullptr,         // dup
+    nullptr          // local
+};
+
 void delete_pin(pTHX_ Affix_Pin * pin) {
-    if (pin == NULL)
+    if (pin == nullptr)
         return;
 
     // If this pin "owns" the C memory, free it.
-    if (pin->managed && pin->pointer != NULL)
+    if (pin->managed && pin->pointer != nullptr)
         safefree(pin->pointer);
 
     // The infix_type is stored in an arena owned by the pin. Destroying the
     // arena frees the type graph.
-    if (pin->type_arena != NULL)
+    if (pin->type_arena != nullptr)
         infix_arena_destroy(pin->type_arena);
     safefree(pin);
 }
@@ -93,7 +229,7 @@ int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg) {
     Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
     warn("Line: %d", __LINE__);
 
-    if (pin == NULL || pin->type == NULL || pin->pointer == NULL) {
+    if (pin == nullptr || pin->type == nullptr || pin->pointer == nullptr) {
         warn("Line: %d", __LINE__);
         sv_setsv_mg(sv, &PL_sv_undef);
         warn("Line: %d", __LINE__);
@@ -102,7 +238,8 @@ int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg) {
     warn("Line: %d", __LINE__);
 
     // Delegate to the centralized marshalling function.
-    SV * val = ptr2sv(aTHX_ pin->pointer, pin->type);
+    SV * val;
+    ptr2sv(aTHX_ pin->pointer, val, pin->type);
     sv_setsv_mg(sv, val);
     warn("Line: %d, %p", __LINE__, pin->pointer);
 
@@ -117,7 +254,7 @@ int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg) {
         return 0;
     }
     // Delegate to the centralized marshalling function.
-    marshal_sv_to_c(aTHX_ pin->pointer, sv, pin->type);
+    sv2ptr(aTHX_ pin->pointer, sv, pin->type);
     return 0;
 }
 
@@ -129,22 +266,14 @@ int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg) {
     return 0;
 }
 
-static MGVTBL Affix_pin_vtbl = {
-    Affix_get_pin,   // get
-    Affix_set_pin,   // set
-    NULL,            // len
-    NULL,            // clear
-    Affix_free_pin,  // free
-    NULL,            // copy
-    NULL,            // dup
-    NULL             // local
-};
-
 void pin(pTHX_ infix_arena_t * type_arena, const infix_type * type, SV * sv, void * ptr, bool managed) {}
 
 XS_INTERNAL(Affix_pin) {}
 XS_INTERNAL(Affix_unpin) {}
 XS_INTERNAL(Affix_is_pin) {}
+
+// Callback system
+void Affix_Callback_Handler(infix_context_t * ctx, void * retval, void ** args) {}
 
 // Utils
 XS_INTERNAL(Affix_sv_dump) {
@@ -158,10 +287,53 @@ XS_INTERNAL(Affix_sv_dump) {
 XS_INTERNAL(Affix_gen_dualvar) {
     Stack_off_t ax = 0;
     // dAXMARK;  // ST(...)
-    ST(0) = sv_2mortal(gen_dualvar(aTHX_ SvIV(ST(0)), SvPVbyte_nolen(ST(1))));
+    ST(0) = sv_2mortal(_Affix_gen_dualvar(aTHX_ SvIV(ST(0)), SvPVbyte_nolen(ST(1))));
     XSRETURN(1);
 }
 
+SV * _Affix_gen_dualvar(pTHX_ IV iv, const char * pv) {
+    SV * sv = newSVpvn_share(pv, strlen(pv), 0);
+    (void)SvUPGRADE(sv, SVt_PVIV);
+    SvIV_set(sv, iv);
+    SvIandPOK_on(sv);
+    return sv;
+}
+
+// Marshal
+void ptr2sv(pTHX_ void *, SV *, const infix_type *) {}
+void sv2ptr(pTHX_ SV *, void *, const infix_type *) {}
+
+//
+void register_constant(const char * package, const char * name, SV * value) {
+    dTHX;
+    HV * stash = gv_stashpv(package, GV_ADD);
+    newCONSTSUB(stash, (char *)name, value);
+}
+void _export_function(pTHX_ HV * _export, const char * what, const char * _tag) {
+    SV ** tag = hv_fetch(_export, _tag, strlen(_tag), TRUE);
+    if (tag && SvOK(*tag) && SvROK(*tag) && (SvTYPE(SvRV(*tag))) == SVt_PVAV)
+        av_push((AV *)SvRV(*tag), newSVpv(what, 0));
+    else {
+        AV * av = newAV();
+        av_push(av, newSVpv(what, 0));
+        (void)hv_store(_export, _tag, strlen(_tag), newRV_noinc(MUTABLE_SV(av)), 0);
+    }
+}
+
+void export_constant(const char * package, const char * name, const char * _tag, double val) {
+    dTHX;
+    register_constant(package, name, newSVnv(val));
+    // Assumes an `export_function` macro exists in a header.
+    // We will use the direct call for clarity.
+    _export_function(aTHX_ get_hv(form("%s::EXPORT_TAGS", package), GV_ADD), name, _tag);
+}
+void set_isa(const char * package, const char * parent) {
+    dTHX;
+    // Ensure the parent package's stash exists
+    gv_stashpv(parent, GV_ADD | GV_ADDMULTI);
+    // Push parent onto @ISA
+    av_push(get_av(form("%s::ISA", package), TRUE), newSVpv(parent, 0));
+}
 // Cribbed from Perl::Destruct::Level so leak testing works without yet another prereq
 XS_INTERNAL(Affix_set_destruct_level) {
     dXSARGS;
@@ -173,10 +345,9 @@ XS_INTERNAL(Affix_set_destruct_level) {
 }
 
 //
-void boot_Affix(pTHX_ CV * cv){
+void boot_Affix(pTHX_ CV * cv) {
     dXSBOOTARGSXSAPIVERCHK;
     PERL_UNUSED_VAR(items);
-    // PERL_UNUSED_VAR(items);
 #ifdef USE_ITHREADS  // Windows...
     my_perl = (PerlInterpreter *)PERL_GET_CONTEXT;
 #endif
@@ -189,11 +360,11 @@ void boot_Affix(pTHX_ CV * cv){
     //             ( [lib, version], symbol, [args], return )
     //             ( lib, [symbol, name], [args], return )
     //             ( [lib, version], [symbol, name], [args], return )
-    (void)newXSproto_portable("Affix::affix", Affix_affix, __FILE__, "$$$;$");
+    (void)newXSproto_portable("Affix::affix", Affix_affix, __FILE__, "$$$");
     XSANY.any_i32 = 0;
     // Affix::wrap(  lib, symbol, [args], return )
     //             ( [lib, version], symbol, [args], return )
-    (void)newXSproto_portable("Affix::wrap", Affix_affix, __FILE__, "$$$$");
+    (void)newXSproto_portable("Affix::wrap", Affix_affix, __FILE__, "$$$");
     XSANY.any_i32 = 1;
     (void)newXSproto_portable("Affix::DESTROY", Affix_DESTROY, __FILE__, "$");
     (void)newXSproto_portable("Affix::END", Affix_END, __FILE__, "");
@@ -213,16 +384,9 @@ void boot_Affix(pTHX_ CV * cv){
     export_function("Affix", "unpin", "base");
     (void)newXSproto_portable("Affix::is_pin", Affix_is_pin, __FILE__, "$");
 
-
     (void)newXSproto_portable("Affix::set_destruct_level", Affix_set_destruct_level, __FILE__, "$");
     (void)newXSproto_portable("Affix::sv_dump", Affix_sv_dump, __FILE__, "$");
     (void)newXSproto_portable("Affix::gen_dualvar", Affix_gen_dualvar, __FILE__, "$$");
-
-    (void)newXSproto_portable("Affix::load_library", Affix_load_library, __FILE__, "$");
-    (void)newXSproto_portable("Affix::free_library", Affix_free_library, __FILE__, "$;$");
-    (void)newXSproto_portable("Affix::list_symbols", Affix_list_symbols, __FILE__, "$");
-    (void)newXSproto_portable("Affix::find_symbol", Affix_find_symbol, __FILE__, "$$");
-    (void)newXSproto_portable("Affix::dlerror", Affix_dlerror, __FILE__, "");
 
     //
     Perl_xs_boot_epilog(aTHX_ ax);

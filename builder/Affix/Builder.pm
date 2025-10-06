@@ -122,7 +122,7 @@ class    #
     }
 
     method Build_PL() {
-        die "Can't build Affix under --pureperl-only\n" if $pureperl;
+        die "Pure perl Affix? Ha! You wish.\n" if $pureperl;
         say sprintf 'Creating new Build script for %s %s', $meta->name, $meta->version;
         $self->write_file( 'Build', sprintf <<'', $^X, __PACKAGE__, __PACKAGE__ );
 #!%s
@@ -162,21 +162,24 @@ use %s;
     # infix builder
     method step_clone_infix() {
         return                      if cwd->absolute->child('infix')->exists;
-        die 'Failed to clone infix' if system 'git clone --verbose https://github.com/sanko/infix/';
+        die 'Failed to clone infix' if system 'git clone --verbose https://github.com/sanko/infix.git';
     }
 
     method step_infix () {
         $self->step_clone_infix();
-        return my $pre = cwd->absolute->child( qw[blib arch auto], $meta->name );
+        my $pre = cwd->absolute->child('build_lib');
         return 0 if -d $pre;
         $pre->child('lib')->mkdir;
         my $cwd       = cwd->absolute;
         my $build_dir = $cwd->child('infix')->absolute;
-        chdir $build_dir;
-        `gmake`;
-        return 0;
-        warn `xmake -P .`;
 
+        #~ chdir $build_dir;
+        warn `$^X infix/build.pl`;
+
+        #~ `gmake`;
+        return 0;
+
+        #~ warn `xmake -P .`;
         #~ die "Can't build xs files under --pureperl-only\n" if $opt{'pureperl-only'};
         if ( $^O eq 'MSWin32' ) {
             for my $exe ( $make, qw[gmake nmake mingw32-make] ) {
@@ -230,23 +233,6 @@ use %s;
         my $has_cxx = !1;
         warn $cwd;
 
-        if (0) {
-            use ExtUtils::ParseXS;
-            my $pxs = ExtUtils::ParseXS->new;
-            $pxs->process_file(
-                filename     => 'lib/Affix.xs',
-                output       => 'lib/Affix.c',
-                'C++'        => 0,
-                typemap      => 'typemap',
-                hiertype     => 1,
-                except       => 1,
-                versioncheck => 1,
-                linenumbers  => 1,
-                optimize     => 1,
-                prototypes   => 1,
-                die_on_error => 0
-            );
-        }
         for my $source (
 
             #~ find( qr/\.c$/, $cwd->child('lib') )

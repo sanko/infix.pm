@@ -76,14 +76,14 @@ package Test2::Tools::Affix 0.09 {
         $compiler->link;
     }
 
-    sub affix_ok ( $lib, $name, $args, $ret ) {
+    sub affix_ok ( $lib, $name, $signature ) {
         my $c = context;
         my $sub;
         my $okay = run_subtest(
             'affix ' . $name . '( ' . ' )',
             sub {
                 ok lives {
-                    $sub = affix( $lib, $name, $args, $ret )
+                    $sub = affix( $lib, $name, $signature )
                 }, 'affix ' . $name . ' ...';
                 isa_ok $sub, ['Affix'], $name;
             },

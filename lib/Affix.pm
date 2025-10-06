@@ -17,9 +17,9 @@ package Affix 1.00 {    # 'FFI' is my middle name!
         $okay               = XSLoader::load();
         my $platform
             = 'Affix::Platform::' .
-            ( ( Affix::Platform::Windows() ) ? 'Windows' :
-                Affix::Platform::macOS() ? 'MacOS' :
-                ( Affix::Platform::FreeBSD() || Affix::Platform::OpenBSD() || Affix::Platform::NetBSD() || Affix::Platform::DragonFlyBSD() ) ? 'BSD' :
+            ( ( $^O eq 'MSWin32' ) ? 'Windows' :
+                $^O eq 'darwin'                                                                   ? 'MacOS' :
+                ( $^O eq 'freebsd' || $^O eq 'openbsd' || $^O eq 'netbsd' || $^O eq 'dragonfly' ) ? 'BSD' :
                 'Unix' );
 
         #~ warn $platform;
