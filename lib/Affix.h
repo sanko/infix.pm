@@ -55,8 +55,8 @@ typedef HMODULE Affix_Lib;
 typedef void * Affix_Lib;
 #endif
 
-typedef void (*Affix_Push)(pTHX_ SV *, void *);
-typedef void (*Affix_Pop)(pTHX_ SV *, void *);
+typedef void (*Affix_Push)(pTHX_ const infix_type *, SV *, void *);
+typedef void (*Affix_Pop)(pTHX_ const infix_type *, SV *, void *);
 
 typedef struct {
     infix_forward_t * infix;

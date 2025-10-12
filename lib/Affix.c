@@ -1,6 +1,5 @@
 #include "Affix.h"
 
-
 #if defined(INFIX_OS_WINDOWS)
 Affix_Lib load_library(const char * lib) {
     return LoadLibraryA(lib);
@@ -46,6 +45,25 @@ XS_INTERNAL(Affix_find_symbol) {}
 XS_INTERNAL(Affix_dlerror) {}
 
 //
+void push_int32(pTHX_ const infix_type * type, SV * sv, void * ptr) {
+    int x = SvIV(sv);
+    if (ptr == nullptr)
+        Newxz(ptr, 1, int *);
+    //~ Copy(&i, ptr, 1, int);
+
+    Copy(&x, ptr, 1, int);
+
+
+    //~ Newxz(args[1], 1, int *);
+    //~ Copy(&x, args[1], 1, int);
+
+    //~ Newxz(ptr, 1, int *);
+    //~ Copy(&x, ptr, 1, int);
+
+    warn("in push_int32");
+}
+
+//
 extern void Affix_trigger(pTHX_ CV * cv) {
     dSP;
     dAXMARK;
@@ -56,34 +74,62 @@ extern void Affix_trigger(pTHX_ CV * cv) {
     dMY_CXT;
     // size_t *cvm_x = MY_CXT.x;
 
-
     infix_cif_func cif = (infix_cif_func)infix_forward_get_code(affix->infix);
     //
-    int my_int_1 = SvIV(ST(0));
-    int my_int_2 = SvIV(ST(1));
+
+
+    /*
+
+// User takes responsibility for packing the data.
+infix_arena_t* arena = infix_arena_create(128);
+
+// Allocate and fill the arguments contiguously.
+int*    p_a = infix_arena_alloc(arena, sizeof(int),    _Alignof(int));    *p_a = 10;
+double* p_b = infix_arena_alloc(arena, sizeof(double), _Alignof(double)); *p_b = 3.14;
+char*   p_c = infix_arena_alloc(arena, sizeof(char),   _Alignof(char));   *p_c = 'X';
+
+// Create the void** array, which is still required by the API.
+void* args[] = { p_a, p_b, p_c }; // This array now points to a tight block of memory.
+
+// Call the trampoline.
+cif_func(target_fn, &ret_buf, args);
+
+infix_arena_destroy(arena);
+
+    */
+
+
+    //~ c23_nodiscard infix_arena_t * infix_arena_create	(	size_t 	initial_size	)
+
+    infix_arena_t * arena = infix_arena_create(sizeof(void *) * 2);
+
+
+    //~ int my_int_1 = SvIV(ST(0));
+    //~ int my_int_2 = SvIV(ST(1));
     int ret;
 
-    void * args[] = {&my_int_1, &my_int_2};
+    //~ void * args[2] = {&my_int_1, &my_int_2};
+    void ** args;
+    Newxz(args, 2, void *);
     warn("Here 1!");
 
+    Newxz(args[0], 1, int *);
+    Newxz(args[1], 1, int *);
 
-    for (Stack_off_t st = 0; st < infix_forward_get_num_args(affix->infix); st++) {
-        affix->push[st](aTHX_ ST(st), args[st]
-                        //~ affix,
-                        //~ affix->push[instruction],
-                        //~ cvm,
-                        //~ ax +
-                        //~ #ifndef AFFIX_PROFILE
-                        //~ st
-                        //~ #else
-                        //~ 0
-                        //~ #endif
-        );
-    }
+    for (Stack_off_t st = 0; st < infix_forward_get_num_args(affix->infix); st++)
+        affix->push[st](aTHX_ infix_forward_get_arg_type(affix->infix, st), ST(st), args[st]);
+
+    warn("Finished pushing params!");
+
+    warn("Here1.1!");
+
+    DumpHex(args, 16);
+    //~ DumpHex(args[0], 16);
+    //~ DumpHex(args[1], 16);
 
     //
     if (affix->symbol != nullptr)
-        cif(affix->symbol, &ret, args);
+        cif(&ret, args);
     warn("Here 2!");
     //~ XSRETURN_IV(printf_ret);
 
@@ -94,10 +140,6 @@ extern void Affix_trigger(pTHX_ CV * cv) {
 void Affix_destroy(pTHX_ infix_forward_t * ctx) {}
 
 //~ typedef void (*push)(aTHX_ SV *, void *);
-
-void push_int32(pTHX_ SV * sv, void * ptr) {
-    warn("in push_int32");
-}
 
 XS_INTERNAL(Affix_affix) {
     // ix == 0 if Affix::affix
@@ -157,7 +199,7 @@ XS_INTERNAL(Affix_affix) {
 
         //
         const char * signature = SvPVbyte_nolen(ST(2));
-        infix_status status = infix_forward_create(&infix, signature);
+        infix_status status = infix_forward_create(&infix, signature, affix->symbol, NULL);
         if (status != INFIX_SUCCESS) {
             free_library(libhandle);
             //~ safefree(affix);
@@ -344,6 +386,45 @@ XS_INTERNAL(Affix_set_destruct_level) {
     XSRETURN_EMPTY;
 }
 
+// Debugging
+void _DumpHex(pTHX_ const void * addr, size_t len, const char * file, int line) {
+    fflush(stdout);
+    int perLine = 16;
+    // Silently ignore silly per-line values.
+    if (perLine < 4 || perLine > 64)
+        perLine = 16;
+    size_t i;
+    U8 * buff;
+    Newxz(buff, perLine + 1, U8);
+    const U8 * pc = (const U8 *)addr;
+    printf("Dumping %lu bytes from %p at %s line %d\n", len, addr, file, line);
+    // Length checks.
+    if (len == 0)
+        croak("ZERO LENGTH");
+    for (i = 0; i < len; i++) {
+        if ((i % perLine) == 0) {  // Only print previous-line ASCII buffer for
+            // lines beyond first.
+            if (i != 0)
+                printf(" | %s\n", buff);
+            printf("#  %03zu ", i);  // Output the offset of current line.
+        }
+        // Now the hex code for the specific character.
+        printf(" %02x", pc[i]);
+        // And buffer a printable ASCII character for later.
+        if ((pc[i] < 0x20) || (pc[i] > 0x7e))  // isprint() may be better.
+            buff[i % perLine] = '.';
+        else
+            buff[i % perLine] = pc[i];
+        buff[(i % perLine) + 1] = '\0';
+    }
+    // Pad out last line if not exactly perLine characters.
+    while ((i % perLine) != 0) {
+        printf("   ");
+        i++;
+    }
+    printf(" | %s\n", buff);
+    fflush(stdout);
+}
 //
 void boot_Affix(pTHX_ CV * cv) {
     dXSBOOTARGSXSAPIVERCHK;
