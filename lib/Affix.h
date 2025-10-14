@@ -42,6 +42,7 @@ START_MY_CXT;
 #define infix_free safefree
 
 // The core 'infix' FFI library header
+#include "common/infix_internals.h"
 #include <infix/infix.h>
 
 // Import platform flags
@@ -61,7 +62,8 @@ typedef void (*Affix_Pop)(pTHX_ const infix_type *, SV *, void *);
 typedef struct {
     infix_forward_t * infix;
     infix_arena_t * arena;
-    void * symbol;
+    infix_arena_t * args_arena;
+    infix_cif_func cif;
     Affix_Push * push;
     Affix_Pop * pop;
 } Affix;

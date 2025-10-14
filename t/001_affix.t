@@ -13,9 +13,17 @@ subtest 'forward' => sub {
 #include "std.h"
 // ext: .c
 DLLEXPORT int add(int a, int b) {warn("Called!"); return a + b; }
+DLLEXPORT unsigned int u_add(unsigned int a, unsigned int b) {warn("Unsigned called!"); return a + b; }
 
-        ok affix( $lib, 'add', '(int32, int32) -> int32' ), 'affix( "add", "(int32, int32) -> int32")';
-        is add( 10, 4 ), 14, 'add( 10, 4 )';
+        subtest 'int' => sub {
+            ok affix( $lib, 'add', '(int32, int32) -> int32' ), 'affix( "add", "(int32, int32) -> int32")';
+            is add( 10, 4 ),  14, 'add( 10, 4 )';
+            is add( 20, 40 ), 60, 'add( 20, 40 )';
+        };
+        subtest 'unsigned int' => sub {
+            ok affix( $lib, 'u_add', '(uint32, uint32) -> uint32' ), 'affix( "u_add", "(uint32, uint32) -> uint32")';
+            is u_add( 10, 4 ), 14, 'u_add( 10, 4 )';
+        }
     };
 };
 done_testing;

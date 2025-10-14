@@ -45,22 +45,26 @@ XS_INTERNAL(Affix_find_symbol) {}
 XS_INTERNAL(Affix_dlerror) {}
 
 //
+void push_uint32(pTHX_ const infix_type * type, SV * sv, void * ptr) {
+    warn("push_uint32");
+    unsigned int x = SvUV(sv);
+    Copy(&x, ptr, 1, unsigned int);
+}
+
 void push_int32(pTHX_ const infix_type * type, SV * sv, void * ptr) {
+    warn("push_int32");
     int x = SvIV(sv);
-    if (ptr == nullptr)
-        Newxz(ptr, 1, int *);
-    //~ Copy(&i, ptr, 1, int);
-
     Copy(&x, ptr, 1, int);
+}
 
+void pull_int32(pTHX_ const infix_type * type, SV * sv, void * ptr) {
+    warn("pop_int32");
+    sv_setiv_mg(sv, *(int *)ptr);
+}
 
-    //~ Newxz(args[1], 1, int *);
-    //~ Copy(&x, args[1], 1, int);
-
-    //~ Newxz(ptr, 1, int *);
-    //~ Copy(&x, ptr, 1, int);
-
-    warn("in push_int32");
+void pull_uint32(pTHX_ const infix_type * type, SV * sv, void * ptr) {
+    warn("pop_uint32");
+    sv_setuv_mg(sv, *(unsigned int *)ptr);
 }
 
 //
@@ -74,7 +78,6 @@ extern void Affix_trigger(pTHX_ CV * cv) {
     dMY_CXT;
     // size_t *cvm_x = MY_CXT.x;
 
-    infix_cif_func cif = (infix_cif_func)infix_forward_get_code(affix->infix);
     //
 
 
@@ -107,17 +110,24 @@ infix_arena_destroy(arena);
     //~ int my_int_1 = SvIV(ST(0));
     //~ int my_int_2 = SvIV(ST(1));
     int ret;
+    void * ret_ptr;
 
     //~ void * args[2] = {&my_int_1, &my_int_2};
-    void ** args;
-    Newxz(args, 2, void *);
+    //~ void ** args;
+
+    affix->args_arena->current_offset = 0;
+    //~ void ** args = infix_arena_alloc(affix->args_arena, sizeof(void *) * 2, _Alignof(void *));
+    void ** args = (void **)affix->args_arena->buffer;
+
+    //~ Newxz(args, 2, void *);
     warn("Here 1!");
 
-    Newxz(args[0], 1, int *);
-    Newxz(args[1], 1, int *);
+    //~ Newxz(args[0], 1, int *);
+    //~ Newxz(args[1], 1, int *);
 
-    for (Stack_off_t st = 0; st < infix_forward_get_num_args(affix->infix); st++)
+    for (Stack_off_t st = 0; st < infix_forward_get_num_args(affix->infix); st++) {
         affix->push[st](aTHX_ infix_forward_get_arg_type(affix->infix, st), ST(st), args[st]);
+    }
 
     warn("Finished pushing params!");
 
@@ -128,16 +138,27 @@ infix_arena_destroy(arena);
     //~ DumpHex(args[1], 16);
 
     //
-    if (affix->symbol != nullptr)
-        cif(&ret, args);
+    //~ affix->cif(&ret, args);
+    Newxz(ret_ptr, 1, int *);
+    affix->cif(ret_ptr, args);
     warn("Here 2!");
     //~ XSRETURN_IV(printf_ret);
 
-    PL_stack_sp = PL_stack_base + ax + (((ST(0) = newSViv(ret))) ? 0 : -1);
+    //~ pop_int32
+
+    bool ret_not_void = true;
+    SV * xxx = newSViv(0);
+    pull_int32(aTHX_ nullptr, xxx, ret_ptr);
+
+    PL_stack_sp = PL_stack_base + ax + ((ST(0) = xxx) ? 0 : -1);
     return;
 }
 
-void Affix_destroy(pTHX_ infix_forward_t * ctx) {}
+void Affix_destroy(pTHX_ infix_forward_t * ctx) {
+
+    // TODO: cleanup!
+    //~ args_arena
+}
 
 //~ typedef void (*push)(aTHX_ SV *, void *);
 
@@ -156,6 +177,8 @@ XS_INTERNAL(Affix_affix) {
 
     SV * const xsub_tmp_sv = ST(0);
     SvGETMAGIC(xsub_tmp_sv);
+
+    char * rename = nullptr;
 
     {
         infix_forward_t * infix = nullptr;
@@ -190,16 +213,16 @@ XS_INTERNAL(Affix_affix) {
         if (libhandle == nullptr)
             XSRETURN_UNDEF;  // User could check get_dlerror()
                              //
-        const char * symbol = SvPVbyte_nolen(ST(1));
-        affix->symbol = find_symbol(libhandle, symbol);
-        if (affix->symbol == nullptr) {
+        const char * symbol_name = rename = SvPVbyte_nolen(ST(1));
+        void * symbol = find_symbol(libhandle, symbol_name);
+        if (symbol == nullptr) {
             free_library(libhandle);
             XSRETURN_UNDEF;
         }
 
         //
         const char * signature = SvPVbyte_nolen(ST(2));
-        infix_status status = infix_forward_create(&infix, signature, affix->symbol, NULL);
+        infix_status status = infix_forward_create(&infix, signature, symbol, NULL);
         if (status != INFIX_SUCCESS) {
             free_library(libhandle);
             //~ safefree(affix);
@@ -210,16 +233,46 @@ XS_INTERNAL(Affix_affix) {
 
     //~ infix_cif_func cif = (infix_cif_func)infix_forward_get_code(affix->infix);
     //
+    affix->cif = (infix_cif_func)infix_forward_get_code(affix->infix);
     Newxz(affix->push, infix_forward_get_num_args(affix->infix), Affix_Push);
-    for (size_t i = 0; i < infix_forward_get_num_args(affix->infix); ++i)
-        affix->push[i] = push_int32;
+    size_t num_args = infix_forward_get_num_args(affix->infix);
+    size_t args_size = sizeof(sizeof(void *) * num_args);
+    size_t args_cache = 0;
 
+    for (size_t i = 0; i < num_args; ++i) {
+        //~ affix->push[i] = push_int32;
+        const infix_type * type = infix_forward_get_arg_type(affix->infix, i);
+        size_t _size = infix_type_get_size(type);
+        args_size += sizeof(void *);
+        warn("i: %d, size: %d, total: %d, args_cache: %d", i, _size, args_size, args_cache);
+        args_cache += _size;
+    }
 
-    //~ c23_nodiscard size_t ;
+    affix->args_arena = infix_arena_create(args_size + args_cache);
+    void ** args = infix_arena_alloc(affix->args_arena, sizeof(void *), 2);
 
-    //
+    for (size_t i = 0; i < num_args; ++i) {
+        const infix_type * type = infix_forward_get_arg_type(affix->infix, i);
+        switch (type->category) {
+        case INFIX_TYPE_PRIMITIVE:
+            switch (type->meta.primitive_id) {  // TODO: Expose meta publicly
+            case INFIX_PRIMITIVE_UINT32:
+                args[i] = infix_calloc(1, sizeof(unsigned int *));
+                affix->push[i] = push_uint32;
+            case INFIX_PRIMITIVE_SINT32:
+                args[i] = infix_calloc(1, sizeof(int *));
+                affix->push[i] = push_int32;
+            default:
+                warn("Unknown primitive");
+            }
+        }
+    }
+
+    // 0 is the void ** itself
+    // after void ** (whereever that 2nd * is) we stack it with the pointers.
+
+    // TODO: make this accurate with variadic functions
     char * prototype = "$$";
-    char * rename = "add";
 
     STMT_START {
         cv = newXSproto_portable(ix == 0 ? rename : nullptr, Affix_trigger, __FILE__, prototype);
