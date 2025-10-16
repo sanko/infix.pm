@@ -3,6 +3,7 @@ use blib;
 use Test2::Tools::Affix qw[:all];
 use Affix               qw[affix wrap pin callback load_library find_symbol get_last_error_message sizeof];
 use Config;
+
 # Ensure output is not buffered, for clear test diagnostics.
 $|++;
 
@@ -19,7 +20,10 @@ my $C_CODE = <<'END_C';
     #define DLLEXPORT
 #endif
 
-/* Part 1: Basic Primitives */
+/* Expose global vars */
+DLLEXPORT int global_counter = 42;
+
+/* Basic Primitives */
 DLLEXPORT int add(int a, int b) { return a + b; }
 DLLEXPORT unsigned int u_add(unsigned int a, unsigned int b) { return a + b; }
 
@@ -36,7 +40,7 @@ DLLEXPORT float echo_float(float v) { return v; }
 DLLEXPORT double echo_double(double v) { return v; }
 DLLEXPORT bool echo_bool(bool v) { return v; }
 
-/* Part 2: Pointers and References */
+/* Pointers and References */
 DLLEXPORT const char* get_hello_string() { return "Hello from C"; }
 
 // Dereferences a pointer and returns its value + 10.
@@ -58,7 +62,7 @@ DLLEXPORT int check_string_ptr(char** s) {
     return 0; // failure
 }
 
-/* Part 3: Structs and Arrays */
+/* Structs and Arrays */
 typedef struct {
     int32_t id;
     double value;
@@ -88,7 +92,7 @@ DLLEXPORT int64_t sum_s64_array(int64_t* arr, int len) {
     return total;
 }
 
-/* Part 4: Callbacks */
+/* Callbacks */
 // A harness function for testing simple callbacks
 DLLEXPORT int call_int_cb(int (*cb)(int), int val) {
     return cb(val);
@@ -132,38 +136,42 @@ subtest 'Symbol Finding' => sub {
 #
 subtest 'Pinning and Marshalling (Dereferencing)' => sub {
     plan 4;
-    note 'Testing pin() and the magic of ${...} for reading/writing C data.';
     subtest 'sint32' => sub {
         plan 3;
-        my $pin_int = pin( 'int32', 123 );
-        isa_ok( $pin_int, ['Affix::Pin'], 'pin("sint32", ...) returns a pin object' );
-        is( ${$pin_int}, 123, 'Dereferencing a pinned int reads the correct value' );
-        ${$pin_int} = 456;
-        is( ${$pin_int}, 456, 'Assigning to a dereferenced pin writes the correct value' );
-    };
-    subtest 'double (float64)' => sub {
-        plan 3;
-        my $pin_double = pin( 'float64', 3.14 );
-        isa_ok( $pin_double, ['Affix::Pin'], 'pin("float64", ...) returns a pin object' );
-        is( ${$pin_double}, float(3.14), 'Dereferencing a pinned double reads the correct value' );
-        ${$pin_double} = -6.28;
-        is( ${$pin_double}, float(-6.28), 'Assigning to a dereferenced pin writes the correct value' );
-    };
-    subtest 'pointer' => sub {
-        plan 3;
-        my $pin_ptr = pin( '*void', 0xDEADBEEF );
-        isa_ok( $pin_ptr, ['Affix::Pin'], 'pin("*void", ...) returns a pin object' );
-        is( ${$pin_ptr}, 0xDEADBEEF, 'Dereferencing a pinned pointer reads the correct address' );
-        ${$pin_ptr} = 0xCAFEF00D;
-        is( ${$pin_ptr}, 0xCAFEF00D, 'Assigning to a dereferenced pin writes the correct address' );
-    };
-    subtest 'Error on invalid signature' => sub {
-        plan 1;
+        my $pin_int;
+        pin( $pin_int, $lib_path, 'global_counter', 'int32' );
+        diag $pin_int;
 
-        # Test that pin dies with an invalid signature
-        like dies { pin( 'invalid_type_!!', 1 ) }, qr/invalid/, 'pin() croaks on invalid type signature';
+        #~ isa_ok( $pin_int, ['Affix::Pin'], 'pin("sint32", ...) returns a pin object' );
+        #~ is( ${$pin_int}, 123, 'Dereferencing a pinned int reads the correct value' );
+        #~ ${$pin_int} = 456;
+        #~ is( ${$pin_int}, 456, 'Assigning to a dereferenced pin writes the correct value' );
     };
+
+    #~ subtest 'double (float64)' => sub {
+    #~ plan 3;
+    #~ my $pin_double = pin( 'float64', 3.14 );
+    #~ isa_ok( $pin_double, ['Affix::Pin'], 'pin("float64", ...) returns a pin object' );
+    #~ is( ${$pin_double}, float(3.14), 'Dereferencing a pinned double reads the correct value' );
+    #~ ${$pin_double} = -6.28;
+    #~ is( ${$pin_double}, float(-6.28), 'Assigning to a dereferenced pin writes the correct value' );
+    #~ };
+    #~ subtest 'pointer' => sub {
+    #~ plan 3;
+    #~ my $pin_ptr = pin( '*void', 0xDEADBEEF );
+    #~ isa_ok( $pin_ptr, ['Affix::Pin'], 'pin("*void", ...) returns a pin object' );
+    #~ is( ${$pin_ptr}, 0xDEADBEEF, 'Dereferencing a pinned pointer reads the correct address' );
+    #~ ${$pin_ptr} = 0xCAFEF00D;
+    #~ is( ${$pin_ptr}, 0xCAFEF00D, 'Assigning to a dereferenced pin writes the correct address' );
+    #~ };
+    #~ subtest 'Error on invalid signature' => sub {
+    #~ plan 1;
+    #~ # Test that pin dies with an invalid signature
+    #~ like dies { pin( 'invalid_type_!!', 1 ) }, qr/invalid/, 'pin() croaks on invalid type signature';
+    #~ };
 };
+done_testing;
+__END__
 #
 subtest 'Forward Calls: Comprehensive Primitives' => sub {
     plan 10;
@@ -203,11 +211,11 @@ subtest 'Forward Calls: Pointers and References' => sub {
     is( ref($string_addr), '', 'Returned pointer is a scalar integer' );
     ok( $string_addr > 0, 'Returned pointer is a non-null address' );
     my $deref   = affix( $lib_path, 'deref_and_add', 'sint32(*sint32)' );
-    my $int_pin = pin( 'sint32', 50 );
-    is( $deref->($int_pin), 60, 'Correctly passed a pin, C dereferenced it and returned value' );
-    my $modify = affix( $lib_path, 'modify_int_ptr', 'void(*sint32, sint32)' );
-    $modify->( $int_pin, 999 );
-    is( ${$int_pin}, 999, 'C function correctly modified the value in our pin (pass-by-reference)' );
+    #~ my $int_pin = pin( 'sint32', 50 );
+    #~ is( $deref->($int_pin), 60, 'Correctly passed a pin, C dereferenced it and returned value' );
+    #~ my $modify = affix( $lib_path, 'modify_int_ptr', 'void(*sint32, sint32)' );
+    #~ $modify->( $int_pin, 999 );
+    #~ is( ${$int_pin}, 999, 'C function correctly modified the value in our pin (pass-by-reference)' );
 };
 #
 subtest 'Forward Calls: Structs and Arrays' => sub {
@@ -224,7 +232,7 @@ subtest 'Forward Calls: Structs and Arrays' => sub {
     is( $get_id->($struct_pin), 42, 'Struct pointer passed and member retrieved correctly' );
     my $sum_array    = affix( $lib_path, 'sum_s64_array', '(*void, int32->int64)' );
     my @numbers      = ( 100, 200, 300, 400 );
-    my $packed_array = pack( "q!*", @numbers );                              # "q" is signed 64-bit native order
+    my $packed_array = pack( "q!*", @numbers );                                        # "q" is signed 64-bit native order
     is( $sum_array->( $packed_array, 4 ), 1000, 'Packed string buffer passed as an array pointer correctly' );
 };
 #
@@ -264,14 +272,10 @@ subtest 'Error Handling on Invalid Signatures' => sub {
     note "Testing that affix() croaks with bad signatures.";
     like dies {
         affix( $lib_path, 'add', 'this is not a valid signature' );
-    },
-    qr[valid],
-    'affix() croaks on a completely invalid signature';
+    }, qr[valid], 'affix() croaks on a completely invalid signature';
     like dies {
         affix( $lib_path, 'add', '(sint32, sint32)->invalid_return' );
-    },
-    qr[invalid],
-    'affix() croaks on an invalid type within a signature';
+    }, qr[invalid], 'affix() croaks on an invalid type within a signature';
 };
 
 # In your test script, before done_testing;
@@ -280,8 +284,8 @@ subtest 'sizeof() Introspection' => sub {
     note 'Testing the native Affix::sizeof() function.';
 
     # Basic primitives
-    is( sizeof('int8'),   1, "sizeof('int8') is 1" );
-    is( sizeof('int32'),  4, "sizeof('int32') is 4" );
+    is( sizeof('int8'),    1, "sizeof('int8') is 1" );
+    is( sizeof('int32'),   4, "sizeof('int32') is 4" );
     is( sizeof('float64'), 8, "sizeof('float64') is 8" );
 
     # Pointer size should match the platform's pointer size

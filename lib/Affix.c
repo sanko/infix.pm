@@ -161,6 +161,22 @@ int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg) {
     return 0;
 }
 
+U32 Affix_len_pin(pTHX_ SV * sv, MAGIC * mg) {
+    warn("len_pin");
+    return 0;
+}
+
+static MGVTBL pin_vtbl_scalar = {
+    Affix_get_pin,   // get
+    Affix_set_pin,   // set
+    Affix_len_pin,   // len
+    NULL,            // clear
+    Affix_free_pin,  // free
+    NULL,            // copy
+    NULL,            // dup
+    NULL             // local
+};
+
 XS_INTERNAL(Affix_find_symbol) {
     dXSARGS;
     if (items != 2 || !sv_isobject(ST(0)) || !sv_derived_from(ST(0), "Affix::Lib"))
@@ -195,7 +211,116 @@ XS_INTERNAL(Affix_find_symbol) {
     XSRETURN_UNDEF;
 }
 
+/*
+    void * pointer;              ///< The raw C memory address.
+    const infix_type * type;     ///< Infix's description of the data type at 'pointer'. Used for dereferencing.
+    infix_arena_t * type_arena;  ///< Memory arena that owns the 'type' structure.
+    bool managed;
+*/
+
+void _pin(pTHX_ SV * sv, infix_type * type, void * ptr) {
+    //~ warn("void _pin(pTHX_ SV * sv, Affix_Type * type = %s, DCpointer ptr = %p) {...", type->stringify.c_str(), ptr);
+    MAGIC * mg_;
+    Affix_Pin * pin;
+    if (SvMAGICAL(sv)) {
+        mg_ = mg_findext(sv, PERL_MAGIC_ext, &pin_vtbl_scalar);
+        if (mg_ != nullptr) {
+            pin = (Affix_Pin *)mg_->mg_ptr;
+            if (pin->pointer == nullptr)
+                croak("Oh, we messed up");
+
+            warn("[O] Set pointer from %p to %p", pin->pointer, ptr);
+            DumpHex(pin->pointer, 16);
+            int i = 9999;
+            Copy(&i, pin->pointer, 1, int);
+            DumpHex(pin->pointer, 16);
+
+            // set_pin(aTHX_ sv, mg_);
+            // sv_dump(sv);
+            // sv_unmagicext(sv, PERL_MAGIC_ext, &pin_vtbl_scalar);
+            // int x = 99999;
+            // sv2ptr(aTHX_ type, sv, 1, pin->ptr->address);
+            // Copy( ptr, pin->ptr->address,1, int_ptr);
+            // pin->ptr->address = & ptr;
+            // pin->ptr->address = *(DCpointer*) ptr;
+            // return;
+        }
+    }
+
+    Newxz(pin, 1, Affix_Pin);
+
+
+    //~ pin = new Affix_Pin(NULL, (Affix_Pointer *)ptr, type);
+    warn("[N] Set pointer from %p to %p", pin->pointer, ptr);
+
+    mg_ = sv_magicext(sv, NULL, PERL_MAGIC_ext, &pin_vtbl_scalar, (char *)pin, 0);
+    // SvREFCNT_dec(sv);              /* refcnt++ in sv_magicext */
+    //~ if (pin->type->depth == 0) {  // Easy to forget to pass a size to Pointer[...]
+    //~ pin->type->depth = 1;
+    //~ pin->type->length.push_back(1);
+    //~ }
+}
+
 XS_INTERNAL(Affix_pin) {
+    dXSARGS;
+    if (items != 4)
+        croak_xs_usage(cv, "Affix::pin($var, $lib, $symbol, $type)");
+    PING;
+
+    void * symbol = NULL;
+    Affix_Lib implicit_lib_handle = NULL;
+    SV * target_sv = ST(0);
+    SV * name_sv = ST(1);
+    PING;
+
+    const char * symbol_name_str = SvPV_nolen(name_sv);
+
+    PING;
+
+    if (sv_isobject(target_sv) && sv_derived_from(target_sv, "Affix::Lib")) {
+        IV tmp = SvIV((SV *)SvRV(target_sv));
+        Affix_Lib lib = INT2PTR(Affix_Lib, tmp);
+        symbol = infix_library_get_symbol(lib, symbol_name_str);
+    }
+    else if (_get_pin_from_sv(aTHX_ target_sv)) {
+        Affix_Pin * pin = _get_pin_from_sv(aTHX_ target_sv);
+        symbol = pin->pointer;
+    }
+    else if (!SvOK(target_sv)) {
+        implicit_lib_handle = infix_library_open(NULL);
+        if (!implicit_lib_handle) {
+            XSRETURN_UNDEF;
+        }
+        symbol = infix_library_get_symbol(implicit_lib_handle, symbol_name_str);
+    }
+    else {
+        const char * path = SvPV_nolen(target_sv);
+        implicit_lib_handle = infix_library_open(path);
+        if (implicit_lib_handle == NULL) {
+            infix_error_details_t err = infix_get_last_error();
+            croak("Failed to load library from path '%s': %s", path, err.message);
+        }
+        symbol = infix_library_get_symbol(implicit_lib_handle, symbol_name_str);
+    }
+
+    if (symbol == NULL)
+        XSRETURN_UNDEF;
+
+    Affix * affix = nullptr;
+    Newxz(affix, 1, Affix);
+    affix->lib_handle = implicit_lib_handle;
+
+    const char * signature = SvPV_nolen(ST(2));
+    infix_status status = infix_forward_create(&affix->infix, signature, symbol, NULL);
+    if (status != INFIX_SUCCESS) {
+        if (affix->lib_handle)
+            infix_library_close(affix->lib_handle);
+        Safefree(affix);
+        infix_error_details_t err = infix_get_last_error();
+        croak("Failed to create trampoline: %s (code %d, pos %zu)", err.message, err.code, err.position);
+    }
+
+    /*
     dXSARGS;
     if (items != 2)
         croak_xs_usage(cv, "type_signature, initial_value");
@@ -219,7 +344,7 @@ XS_INTERNAL(Affix_pin) {
     sv_bless(sv_outer, gv_stashpv("Affix::Pin", GV_ADD));
     sv_magicext(sv_inner, NULL, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
     ST(0) = sv_2mortal(sv_outer);
-    XSRETURN(1);
+    XSRETURN(1);*/
 }
 
 /// @brief XS implementation for Affix::sizeof($type_signature).
@@ -854,6 +979,89 @@ XS_INTERNAL(Affix_END) {
     }
     XSRETURN_EMPTY;
 }
+
+
+// Debugging
+void _DumpHex(pTHX_ const void * addr, size_t len, const char * file, int line) {
+    if (addr == nullptr) {
+        printf("Dumping %lu bytes from null pointer %p at %s line %d\n", len, addr, file, line);
+        fflush(stdout);
+        return;
+    }
+    fflush(stdout);
+    int perLine = 16;
+    // Silently ignore silly per-line values.
+    if (perLine < 4 || perLine > 64)
+        perLine = 16;
+    size_t i;
+    U8 * buff;
+    Newxz(buff, perLine + 1, U8);
+    const U8 * pc = (const U8 *)addr;
+    printf("Dumping %lu bytes from %p at %s line %d\n", len, addr, file, line);
+    // Length checks.
+    if (len == 0)
+        croak("ZERO LENGTH");
+    for (i = 0; i < len; i++) {
+        if ((i % perLine) == 0) {  // Only print previous-line ASCII buffer for
+            // lines beyond first.
+            if (i != 0)
+                printf(" | %s\n", buff);
+            printf("#  %03zu ", i);  // Output the offset of current line.
+        }
+        // Now the hex code for the specific character.
+        printf(" %02x", pc[i]);
+        // And buffer a printable ASCII character for later.
+        if ((pc[i] < 0x20) || (pc[i] > 0x7e))  // isprint() may be better.
+            buff[i % perLine] = '.';
+        else
+            buff[i % perLine] = pc[i];
+        buff[(i % perLine) + 1] = '\0';
+    }
+    // Pad out last line if not exactly perLine characters.
+    while ((i % perLine) != 0) {
+        printf("   ");
+        i++;
+    }
+    printf(" | %s\n", buff);
+    safefree(buff);
+    fflush(stdout);
+}
+
+#define DD(scalar) _DD(aTHX_ scalar, __FILE__, __LINE__)
+void _DD(pTHX_ SV * scalar, const char * file, int line) {
+    Perl_load_module(aTHX_ PERL_LOADMOD_NOIMPORT, newSVpvs("Data::Printer"), NULL, NULL, NULL);
+    if (!get_cvs("Data::Printer::p", GV_NOADD_NOINIT | GV_NO_SVGMAGIC))
+        return;
+
+    fflush(stdout);
+    dSP;
+    int count;
+
+    ENTER;
+    SAVETMPS;
+
+    PUSHMARK(SP);
+    EXTEND(SP, 1);
+    PUSHs(scalar);
+    PUTBACK;
+
+    count = call_pv("Data::Printer::p", G_SCALAR);
+
+    SPAGAIN;
+
+    if (count != 1)
+        croak("Big trouble\n");
+
+    STRLEN len;
+    const char * s = SvPVx(POPs, len);
+
+    printf("%s at %s line %d\n", s, file, line);
+    fflush(stdout);
+
+    PUTBACK;
+    FREETMPS;
+    LEAVE;
+}
 // ==============================================================================
 // 6. XS Bootstrap
 // ==============================================================================
@@ -899,7 +1107,7 @@ void boot_Affix(pTHX_ CV * cv) {
     newXS("Affix::Lib::DESTROY", Affix_Lib_DESTROY, __FILE__);
     newXS("Affix::find_symbol", Affix_find_symbol, __FILE__);
     newXS("Affix::get_last_error_message", Affix_get_last_error_message, __FILE__);
-    newXS("Affix::pin", Affix_pin, __FILE__);
+    (void)newXSproto_portable("Affix::pin", Affix_pin, __FILE__, "$$$$");
     newXS("Affix::test_multiply", Affix_test_multiply, __FILE__);
     newXS("Affix::sizeof", Affix_sizeof, __FILE__);
     newXS("Affix::callback", Affix_callback, __FILE__);

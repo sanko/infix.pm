@@ -96,7 +96,6 @@ typedef struct {
     UV ref_count;   ///< Reference count. The library is closed only when this reaches 0.
 } LibRegistryEntry;
 
-
 // Function Prototypes for XS and Internal Logic
 
 // The C function that gets executed when an affixed Perl sub is called.
