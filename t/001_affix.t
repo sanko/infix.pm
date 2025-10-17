@@ -1,7 +1,7 @@
 use v5.40;
 use blib;
 use Test2::Tools::Affix qw[:all];
-use Affix               qw[affix wrap pin callback load_library find_symbol get_last_error_message sizeof];
+use Affix               qw[:all];
 use Config;
 
 # Ensure output is not buffered, for clear test diagnostics.
@@ -9,6 +9,8 @@ $|++;
 
 # This C code will be compiled into a temporary library for many of the tests.
 my $C_CODE = <<'END_C';
+//ext: .c
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h> // For strcmp
@@ -22,6 +24,8 @@ my $C_CODE = <<'END_C';
 
 /* Expose global vars */
 DLLEXPORT int global_counter = 42;
+DLLEXPORT void set_global_counter(int value) { global_counter = value;}
+DLLEXPORT int get_global_counter(void) { return global_counter;}
 
 /* Basic Primitives */
 DLLEXPORT int add(int a, int b) { return a + b; }
@@ -102,11 +106,14 @@ DLLEXPORT int call_int_cb(int (*cb)(int), int val) {
 DLLEXPORT double call_math_cb(double (*cb)(double, int), double d, int i) {
     return cb(d, i);
 }
+
 END_C
 
 # Compile the library once for all subtests that need it.
 my $lib_path = compile_ok($C_CODE);
 ok( $lib_path && -e $lib_path, 'Compiled a test shared library successfully' );
+
+#~ diag `nm $lib_path`;
 #
 subtest 'Library Loading and Lifecycle' => sub {
     plan 5;
@@ -135,40 +142,30 @@ subtest 'Symbol Finding' => sub {
 };
 #
 subtest 'Pinning and Marshalling (Dereferencing)' => sub {
-    plan 4;
+    plan 1;
     subtest 'sint32' => sub {
-        plan 3;
+        plan 8;
         my $pin_int;
-        pin( $pin_int, $lib_path, 'global_counter', 'int32' );
+        isa_ok affix $lib_path, 'get_global_counter', '()->int32';
+        isa_ok affix $lib_path, 'set_global_counter', '(int32)->void';
+        #
+        ok pin( $pin_int, $lib_path, 'global_counter', 'int32' ), 'pin(...)';
+        #
+        is $pin_int, 42, 'pinned scalar equals 42';
+        diag 'setting pinned scalar to 100';
+        $pin_int = 100;
         diag $pin_int;
-
-        #~ isa_ok( $pin_int, ['Affix::Pin'], 'pin("sint32", ...) returns a pin object' );
-        #~ is( ${$pin_int}, 123, 'Dereferencing a pinned int reads the correct value' );
-        #~ ${$pin_int} = 456;
-        #~ is( ${$pin_int}, 456, 'Assigning to a dereferenced pin writes the correct value' );
+        is get_global_counter(), 100, 'checking value from inside the shared lib';
+        diag 'setting value from inside the shared lib';
+        set_global_counter(200);
+        is $pin_int, 200, 'checking value from perl';
+        diag 'unpinning scalar';
+        unpin($pin_int);
+        diag 'setting unpinned scalar to 25';
+        $pin_int = 25;
+        is get_global_counter(), 200, 'value is unchanged inside the shared lib';
+        is $pin_int,             25,  'verify that value is local to perl';
     };
-
-    #~ subtest 'double (float64)' => sub {
-    #~ plan 3;
-    #~ my $pin_double = pin( 'float64', 3.14 );
-    #~ isa_ok( $pin_double, ['Affix::Pin'], 'pin("float64", ...) returns a pin object' );
-    #~ is( ${$pin_double}, float(3.14), 'Dereferencing a pinned double reads the correct value' );
-    #~ ${$pin_double} = -6.28;
-    #~ is( ${$pin_double}, float(-6.28), 'Assigning to a dereferenced pin writes the correct value' );
-    #~ };
-    #~ subtest 'pointer' => sub {
-    #~ plan 3;
-    #~ my $pin_ptr = pin( '*void', 0xDEADBEEF );
-    #~ isa_ok( $pin_ptr, ['Affix::Pin'], 'pin("*void", ...) returns a pin object' );
-    #~ is( ${$pin_ptr}, 0xDEADBEEF, 'Dereferencing a pinned pointer reads the correct address' );
-    #~ ${$pin_ptr} = 0xCAFEF00D;
-    #~ is( ${$pin_ptr}, 0xCAFEF00D, 'Assigning to a dereferenced pin writes the correct address' );
-    #~ };
-    #~ subtest 'Error on invalid signature' => sub {
-    #~ plan 1;
-    #~ # Test that pin dies with an invalid signature
-    #~ like dies { pin( 'invalid_type_!!', 1 ) }, qr/invalid/, 'pin() croaks on invalid type signature';
-    #~ };
 };
 done_testing;
 __END__

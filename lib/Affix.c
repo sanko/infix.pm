@@ -132,16 +132,27 @@ Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv) {
 }
 
 int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg) {
+    warn("Affix_free_pin");
     PERL_UNUSED_VAR(sv);
     Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
-    if (pin == NULL)
+    if (pin == nullptr)
         return 0;
+    PING;
     if (pin->managed && pin->pointer)
         safefree(pin->pointer);
-    if (pin->type_arena)
+    PING;
+
+    if (pin->type_arena != nullptr)
         infix_arena_destroy(pin->type_arena);
+    PING;
+
     Safefree(pin);
-    mg->mg_ptr = NULL;
+    PING;
+
+
+    mg->mg_ptr = nullptr;
+    PING;
+
     return 0;
 }
 int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg) {
@@ -218,8 +229,8 @@ XS_INTERNAL(Affix_find_symbol) {
     bool managed;
 */
 
-void _pin(pTHX_ SV * sv, infix_type * type, void * ptr) {
-    //~ warn("void _pin(pTHX_ SV * sv, Affix_Type * type = %s, DCpointer ptr = %p) {...", type->stringify.c_str(), ptr);
+void _pin(pTHX_ SV * sv, const infix_type * type, void * pointer) {
+    warn("void _pin(pTHX_ SV * sv, Affix_Type * type = ..., DCpointer ptr = %p) {...", pointer);
     MAGIC * mg_;
     Affix_Pin * pin;
     if (SvMAGICAL(sv)) {
@@ -227,41 +238,85 @@ void _pin(pTHX_ SV * sv, infix_type * type, void * ptr) {
         if (mg_ != nullptr) {
             pin = (Affix_Pin *)mg_->mg_ptr;
             if (pin->pointer == nullptr)
-                croak("Oh, we messed up");
-
-            warn("[O] Set pointer from %p to %p", pin->pointer, ptr);
-            DumpHex(pin->pointer, 16);
-            int i = 9999;
-            Copy(&i, pin->pointer, 1, int);
-            DumpHex(pin->pointer, 16);
-
-            // set_pin(aTHX_ sv, mg_);
-            // sv_dump(sv);
-            // sv_unmagicext(sv, PERL_MAGIC_ext, &pin_vtbl_scalar);
-            // int x = 99999;
-            // sv2ptr(aTHX_ type, sv, 1, pin->ptr->address);
-            // Copy( ptr, pin->ptr->address,1, int_ptr);
-            // pin->ptr->address = & ptr;
-            // pin->ptr->address = *(DCpointer*) ptr;
-            // return;
+                croak("Oh, no...");
+            pin->pointer = pointer;
+            pin->type = type;  // XXX: Leak!
+            return;
         }
     }
 
-    Newxz(pin, 1, Affix_Pin);
-
-
-    //~ pin = new Affix_Pin(NULL, (Affix_Pointer *)ptr, type);
-    warn("[N] Set pointer from %p to %p", pin->pointer, ptr);
-
-    mg_ = sv_magicext(sv, NULL, PERL_MAGIC_ext, &pin_vtbl_scalar, (char *)pin, 0);
-    // SvREFCNT_dec(sv);              /* refcnt++ in sv_magicext */
-    //~ if (pin->type->depth == 0) {  // Easy to forget to pass a size to Pointer[...]
-    //~ pin->type->depth = 1;
-    //~ pin->type->length.push_back(1);
-    //~ }
+    MAGIC * mg = sv_magicext(sv, NULL, PERL_MAGIC_ext, &pin_vtbl_scalar, NULL, 0);
+    {
+        Newxz(pin, 1, Affix_Pin);
+        pin->pointer = pointer;
+        pin->type = type;
+        mg->mg_ptr = (char *)pin;
+    }
+    return;
 }
 
 XS_INTERNAL(Affix_pin) {
+    dXSARGS;
+    if (items != 4)
+        croak_xs_usage(cv, "var, lib, symbol, type");
+    Affix_Lib _lib;
+    void * symbol = NULL;
+    const char * symbol_name = SvPV_nolen(ST(0));
+    // pin( my $integer, 't/src/58_affix_import_vars', 'integer', Int );
+
+    if (sv_isobject(ST(1)) && sv_derived_from(ST(1), "Affix::Lib")) {
+        IV tmp = SvIV((SV *)SvRV(ST(1)));
+        Affix_Lib lib = INT2PTR(Affix_Lib, tmp);
+        symbol = infix_library_get_symbol(lib, symbol_name);
+    }
+    else if (_get_pin_from_sv(aTHX_ ST(1))) {
+        Affix_Pin * pin = _get_pin_from_sv(aTHX_ ST(1));
+        symbol = pin->pointer;
+    }
+    else if (!SvOK(ST(1))) {
+        _lib = infix_library_open(NULL);
+        if (!_lib)
+            XSRETURN_UNDEF;
+        symbol = infix_library_get_symbol(_lib, symbol_name);
+    }
+    else {
+        const char * path = SvPV_nolen(ST(1));
+        _lib = infix_library_open(path);
+        if (_lib == NULL) {
+            infix_error_details_t err = infix_get_last_error();
+            croak("Failed to load library from path '%s': %s", path, err.message);
+        }
+        symbol = infix_library_get_symbol(_lib, symbol_name);
+    }
+
+    void * ptr = infix_library_get_symbol(_lib, (const char *)SvPV_nolen(ST(2)));
+
+    if (ptr == NULL)
+        croak("Failed to locate '%s'", (const char *)SvPV_nolen(ST(2)));
+
+    infix_type * type = NULL;
+    infix_arena_t * arena = NULL;
+    const char * signature = SvPV_nolen(ST(3));
+    if (infix_type_from_signature(&type, &arena, signature, NULL) != INFIX_SUCCESS)
+        croak("Invalid type signature for pin: %s", signature);
+
+    SV * sv = ST(0);
+
+    _pin(aTHX_ ST(0), type, ptr);
+
+    XSRETURN_YES;
+}
+
+XS_INTERNAL(Affix_unpin) {
+    dXSARGS;
+    if (items != 1)
+        croak_xs_usage(cv, "var");
+    if (mg_findext(ST(0), PERL_MAGIC_ext, &pin_vtbl_scalar) && !sv_unmagicext(ST(0), PERL_MAGIC_ext, &pin_vtbl_scalar))
+        XSRETURN_YES;
+    XSRETURN_NO;
+}
+
+XS_INTERNAL(Affix_pinxxxx) {
     dXSARGS;
     if (items != 4)
         croak_xs_usage(cv, "Affix::pin($var, $lib, $symbol, $type)");
@@ -269,18 +324,20 @@ XS_INTERNAL(Affix_pin) {
 
     void * symbol = NULL;
     Affix_Lib implicit_lib_handle = NULL;
+    Affix_Pin * pin = NULL;
     SV * target_sv = ST(0);
     SV * name_sv = ST(1);
     PING;
 
-    const char * symbol_name_str = SvPV_nolen(name_sv);
+    const char * symbol_name = SvPV_nolen(name_sv);
+    const char * signature = SvPV_nolen(ST(3));
 
     PING;
 
     if (sv_isobject(target_sv) && sv_derived_from(target_sv, "Affix::Lib")) {
         IV tmp = SvIV((SV *)SvRV(target_sv));
         Affix_Lib lib = INT2PTR(Affix_Lib, tmp);
-        symbol = infix_library_get_symbol(lib, symbol_name_str);
+        symbol = infix_library_get_symbol(lib, symbol_name);
     }
     else if (_get_pin_from_sv(aTHX_ target_sv)) {
         Affix_Pin * pin = _get_pin_from_sv(aTHX_ target_sv);
@@ -288,10 +345,9 @@ XS_INTERNAL(Affix_pin) {
     }
     else if (!SvOK(target_sv)) {
         implicit_lib_handle = infix_library_open(NULL);
-        if (!implicit_lib_handle) {
+        if (!implicit_lib_handle)
             XSRETURN_UNDEF;
-        }
-        symbol = infix_library_get_symbol(implicit_lib_handle, symbol_name_str);
+        symbol = infix_library_get_symbol(implicit_lib_handle, symbol_name);
     }
     else {
         const char * path = SvPV_nolen(target_sv);
@@ -300,25 +356,24 @@ XS_INTERNAL(Affix_pin) {
             infix_error_details_t err = infix_get_last_error();
             croak("Failed to load library from path '%s': %s", path, err.message);
         }
-        symbol = infix_library_get_symbol(implicit_lib_handle, symbol_name_str);
+        symbol = infix_library_get_symbol(implicit_lib_handle, symbol_name);
     }
 
     if (symbol == NULL)
         XSRETURN_UNDEF;
 
-    Affix * affix = nullptr;
-    Newxz(affix, 1, Affix);
-    affix->lib_handle = implicit_lib_handle;
+    infix_type * type = NULL;
+    infix_arena_t * arena = NULL;
+    if (infix_type_from_signature(&type, &arena, signature, NULL) != INFIX_SUCCESS)
+        croak("Invalid type signature for pin: %s", signature);
 
-    const char * signature = SvPV_nolen(ST(2));
-    infix_status status = infix_forward_create(&affix->infix, signature, symbol, NULL);
-    if (status != INFIX_SUCCESS) {
-        if (affix->lib_handle)
-            infix_library_close(affix->lib_handle);
-        Safefree(affix);
-        infix_error_details_t err = infix_get_last_error();
-        croak("Failed to create trampoline: %s (code %d, pos %zu)", err.message, err.code, err.position);
-    }
+    _pin(aTHX_ target_sv, type, symbol);
+
+    Newxz(pin, 1, Affix_Pin);
+
+    pin->pointer = symbol;
+    pin->type = type;
+    pin->type_arena = arena;
 
     /*
     dXSARGS;
@@ -334,9 +389,7 @@ XS_INTERNAL(Affix_pin) {
     sv2ptr(aTHX_ initial_value_sv, ptr, type);
     Affix_Pin * pin;
     Newxz(pin, 1, Affix_Pin);
-    pin->pointer = ptr;
-    pin->type = type;
-    pin->type_arena = arena;
+
     pin->managed = true;
     SV * sv_inner = newSV(0);
     sv_setiv(sv_inner, PTR2IV(pin));
@@ -512,46 +565,47 @@ SV * pull_uint128(pTHX_ const infix_type * t, void * p) {
 #endif
 
 SV * pull_pointer(pTHX_ const infix_type * type, void * ptr) {
+    void * c_ptr = *(void **)ptr;
+    if (type->meta.pointer_info.pointee_type->category == INFIX_TYPE_PRIMITIVE &&
+        type->meta.pointer_info.pointee_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8)
+        return newSVpv(c_ptr, strlen(c_ptr));
     // This is a complex topic. For now, returning a raw integer address is the simplest
     // correct behavior. A future version could auto-create a blessed Affix::Pin.
-    void * c_ptr = *(void **)ptr;
     return newSViv(PTR2IV(c_ptr));
 }
 
-static const Affix_Push push_handlers[] = {
-    [INFIX_PRIMITIVE_BOOL] = push_bool,
-    [INFIX_PRIMITIVE_SINT8] = push_sint8,
-    [INFIX_PRIMITIVE_UINT8] = push_uint8,
-    [INFIX_PRIMITIVE_SINT16] = push_sint16,
-    [INFIX_PRIMITIVE_UINT16] = push_uint16,
-    [INFIX_PRIMITIVE_SINT32] = push_sint32,
-    [INFIX_PRIMITIVE_UINT32] = push_uint32,
-    [INFIX_PRIMITIVE_SINT64] = push_sint64,
-    [INFIX_PRIMITIVE_UINT64] = push_uint64,
-    [INFIX_PRIMITIVE_FLOAT] = push_float,
-    [INFIX_PRIMITIVE_DOUBLE] = push_double,
-    [INFIX_PRIMITIVE_LONG_DOUBLE] = push_long_double,
+static const Affix_Push push_handlers[] = {[INFIX_PRIMITIVE_BOOL] = push_bool,
+                                           [INFIX_PRIMITIVE_SINT8] = push_sint8,
+                                           [INFIX_PRIMITIVE_UINT8] = push_uint8,
+                                           [INFIX_PRIMITIVE_SINT16] = push_sint16,
+                                           [INFIX_PRIMITIVE_UINT16] = push_uint16,
+                                           [INFIX_PRIMITIVE_SINT32] = push_sint32,
+                                           [INFIX_PRIMITIVE_UINT32] = push_uint32,
+                                           [INFIX_PRIMITIVE_SINT64] = push_sint64,
+                                           [INFIX_PRIMITIVE_UINT64] = push_uint64,
+                                           [INFIX_PRIMITIVE_FLOAT] = push_float,
+                                           [INFIX_PRIMITIVE_DOUBLE] = push_double,
+                                           [INFIX_PRIMITIVE_LONG_DOUBLE] = push_long_double,
 #if !defined(INFIX_COMPILER_MSVC)
-    [INFIX_PRIMITIVE_SINT128] = push_sint128,
-    [INFIX_PRIMITIVE_UINT128] = push_uint128,
+                                           [INFIX_PRIMITIVE_SINT128] = push_sint128,
+                                           [INFIX_PRIMITIVE_UINT128] = push_uint128
 #endif
 };
-static const Affix_Pull pull_handlers[] = {
-    [INFIX_PRIMITIVE_BOOL] = pull_bool,
-    [INFIX_PRIMITIVE_SINT8] = pull_sint8,
-    [INFIX_PRIMITIVE_UINT8] = pull_uint8,
-    [INFIX_PRIMITIVE_SINT16] = pull_sint16,
-    [INFIX_PRIMITIVE_UINT16] = pull_uint16,
-    [INFIX_PRIMITIVE_SINT32] = pull_sint32,
-    [INFIX_PRIMITIVE_UINT32] = pull_uint32,
-    [INFIX_PRIMITIVE_SINT64] = pull_sint64,
-    [INFIX_PRIMITIVE_UINT64] = pull_uint64,
-    [INFIX_PRIMITIVE_FLOAT] = pull_float,
-    [INFIX_PRIMITIVE_DOUBLE] = pull_double,
-    [INFIX_PRIMITIVE_LONG_DOUBLE] = pull_long_double,
+static const Affix_Pull pull_handlers[] = {[INFIX_PRIMITIVE_BOOL] = pull_bool,
+                                           [INFIX_PRIMITIVE_SINT8] = pull_sint8,
+                                           [INFIX_PRIMITIVE_UINT8] = pull_uint8,
+                                           [INFIX_PRIMITIVE_SINT16] = pull_sint16,
+                                           [INFIX_PRIMITIVE_UINT16] = pull_uint16,
+                                           [INFIX_PRIMITIVE_SINT32] = pull_sint32,
+                                           [INFIX_PRIMITIVE_UINT32] = pull_uint32,
+                                           [INFIX_PRIMITIVE_SINT64] = pull_sint64,
+                                           [INFIX_PRIMITIVE_UINT64] = pull_uint64,
+                                           [INFIX_PRIMITIVE_FLOAT] = pull_float,
+                                           [INFIX_PRIMITIVE_DOUBLE] = pull_double,
+                                           [INFIX_PRIMITIVE_LONG_DOUBLE] = pull_long_double,
 #if !defined(INFIX_COMPILER_MSVC)
-    [INFIX_PRIMITIVE_SINT128] = pull_sint128,
-    [INFIX_PRIMITIVE_UINT128] = pull_uint128,
+                                           [INFIX_PRIMITIVE_SINT128] = pull_sint128,
+                                           [INFIX_PRIMITIVE_UINT128] = pull_uint128
 #endif
 };
 
@@ -1077,11 +1131,9 @@ void boot_Affix(pTHX_ CV * cv) {
 
     newXS("Affix::END", Affix_END, __FILE__);
 
-
     newXS("Affix::affix", Affix_affix, __FILE__);
     newXS("Affix::wrap", Affix_affix, __FILE__);
     newXS("Affix::DESTROY", Affix_DESTROY, __FILE__);
-
 
     //(void)newXSproto_portable("Affix::Type::Pointer::(|", Affix_Type_Pointer, __FILE__, "");
     /* The magic for overload gets a GV* via gv_fetchmeth as */
@@ -1099,7 +1151,6 @@ void boot_Affix(pTHX_ CV * cv) {
     //(void)newXSproto_portable("Affix::(@{}", Affix_Pointer_deref_list, __FILE__, "$;@");
     //  ${}  @{}  %{}  &{}  *{}
 
-
     newXS("Affix::load_library", Affix_load_library, __FILE__);
     sv_setsv(get_sv("Affix::Lib::()", TRUE), &PL_sv_yes);
     (void)newXSproto_portable("Affix::Lib::(0+", Affix_Lib_as_string, __FILE__, "$;@");
@@ -1107,7 +1158,14 @@ void boot_Affix(pTHX_ CV * cv) {
     newXS("Affix::Lib::DESTROY", Affix_Lib_DESTROY, __FILE__);
     newXS("Affix::find_symbol", Affix_find_symbol, __FILE__);
     newXS("Affix::get_last_error_message", Affix_get_last_error_message, __FILE__);
+
+
     (void)newXSproto_portable("Affix::pin", Affix_pin, __FILE__, "$$$$");
+    export_function("Affix", "pin", "pin");
+    (void)newXSproto_portable("Affix::unpin", Affix_unpin, __FILE__, "$");
+    export_function("Affix", "unpin", "pin");
+
+
     newXS("Affix::test_multiply", Affix_test_multiply, __FILE__);
     newXS("Affix::sizeof", Affix_sizeof, __FILE__);
     newXS("Affix::callback", Affix_callback, __FILE__);
@@ -1119,7 +1177,7 @@ void boot_Affix(pTHX_ CV * cv) {
     export_function("Affix", "load_library", "lib");
     export_function("Affix", "find_symbol", "lib");
     export_function("Affix", "get_last_error_message", "core");
-    export_function("Affix", "pin", "pin");
+
     export_function("Affix", "callback", "callback");
 
     Perl_xs_boot_epilog(aTHX_ ax);
