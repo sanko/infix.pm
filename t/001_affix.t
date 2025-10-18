@@ -167,36 +167,37 @@ subtest 'Pinning and Marshalling (Dereferencing)' => sub {
         is $pin_int,             25,  'verify that value is local to perl';
     };
 };
-done_testing;
-__END__
 #
 subtest 'Forward Calls: Comprehensive Primitives' => sub {
     plan 10;
     note 'Testing all primitive fixed-width types from signatures.md.';
     my %tests = (
-        s8     => { val => -100,           sig => 'sint8(sint8)' },
-        u8     => { val =>  200,           sig => 'uint8(uint8)' },
-        s16    => { val => -30000,         sig => 'sint16(sint16)' },
-        u16    => { val =>  60000,         sig => 'uint16(uint16)' },
-        s32    => { val => -2_000_000_000, sig => 'sint32(sint32)' },
-        u32    => { val =>  4_000_000_000, sig => 'uint32(uint32)' },
-        s64    => { val => -5_000_000_000, sig => 'sint64(sint64)' },
-        u64    => { val => 10_000_000_000, sig => 'uint64(uint64)' },
-        float  => { val => float( 1.23),   sig => 'float32(float32)' },
-        double => { val => float(-4.56),   sig => 'float64(float64)' },
+        s8     => { val => -100,           sig => 'sint8' },
+        u8     => { val =>  200,           sig => 'uint8' },
+        s16    => { val => -30000,         sig => 'sint16' },
+        u16    => { val =>  60000,         sig => 'uint16' },
+        s32    => { val => -2_000_000_000, sig => 'sint32' },
+        u32    => { val =>  4_000_000_000, sig => 'uint32' },
+        s64    => { val => -5_000_000_000, sig => 'sint64' },
+        u64    => { val => 10_000_000_000, sig => 'uint64' },
+        float  => { val => float( 1.23),   sig => 'float' },
+        double => { val => float(-4.56),   sig => 'double' }
     );
     for my $type ( sort keys %tests ) {
         my $name = "echo_$type";
         my $val  = $tests{$type}{val};
         my $sig  = $tests{$type}{sig};
-        my $func = affix( $lib_path, $name, $sig );
+        diag $sig;
+        ok my $func = wrap( $lib_path, $name, '(' . $sig . ')->' . $sig ), 'wrap (' . $sig . ')->' . $sig;
         is( $func->($val), $val, "Correctly passed and returned type '$type'" );
     }
-    my $echo_bool = affix( $lib_path, 'echo_bool', 'bool(bool)' );
+    my $echo_bool = affix( $lib_path, 'echo_bool', '(bool)->bool' );
     is( $echo_bool->(1), 1, "Correctly passed and returned boolean (true)" );
     is( $echo_bool->(0), 0, "Correctly passed and returned boolean (false)" );
 };
 #
+done_testing;
+__END__
 subtest 'Forward Calls: Pointers and References' => sub {
     plan 4;
     note 'Testing pointer marshalling, including pass-by-reference.';
@@ -207,7 +208,8 @@ subtest 'Forward Calls: Pointers and References' => sub {
     # but we can verify it's a non-zero integer (a valid-looking address).
     is( ref($string_addr), '', 'Returned pointer is a scalar integer' );
     ok( $string_addr > 0, 'Returned pointer is a non-null address' );
-    my $deref   = affix( $lib_path, 'deref_and_add', 'sint32(*sint32)' );
+    my $deref = affix( $lib_path, 'deref_and_add', 'sint32(*sint32)' );
+
     #~ my $int_pin = pin( 'sint32', 50 );
     #~ is( $deref->($int_pin), 60, 'Correctly passed a pin, C dereferenced it and returned value' );
     #~ my $modify = affix( $lib_path, 'modify_int_ptr', 'void(*sint32, sint32)' );
@@ -220,18 +222,26 @@ subtest 'Forward Calls: Structs and Arrays' => sub {
     note 'Testing passing pointers to complex data structures.';
 
     # The signature for MyStruct is '{s32, f64, p}'
-    my $struct_pin = pin('{int32, float64, *char}');
-    isa_ok( $struct_pin, ['Affix::Pin'], 'Pinned memory for a struct' );
-    my $init   = affix( $lib_path, 'init_struct',   '(*void, int32, float64, *void)->void' );
-    my $get_id = affix( $lib_path, 'get_struct_id', '(*void)->int32' );
-    my $label  = "Test Label";
-    $init->( $struct_pin, 42, 3.14, $label );
-    is( $get_id->($struct_pin), 42, 'Struct pointer passed and member retrieved correctly' );
-    my $sum_array    = affix( $lib_path, 'sum_s64_array', '(*void, int32->int64)' );
-    my @numbers      = ( 100, 200, 300, 400 );
-    my $packed_array = pack( "q!*", @numbers );                                        # "q" is signed 64-bit native order
-    is( $sum_array->( $packed_array, 4 ), 1000, 'Packed string buffer passed as an array pointer correctly' );
+     #~ = pin(my $struct_pin, '{int32, float64, *char}');
+     #~ DLLEXPORT void init_struct(MyStruct* s, int32_t id, double value, const char* label) {
+    #~ DLLEXPORT int32_t get_struct_id(MyStruct* s) {
+
+    my $init   = affix( $lib_path, 'init_struct',   '(*{int32, float64, *char}, int32, float64, *char)->void' );
+    my $get_id = affix( $lib_path, 'get_struct_id', '(*{int32, float64, *char})->int32' );
+    #
+
+    my $label  = 'Test Label';
+    $init->( my ($struct_pin), 42, 3.14, $label );
+    use Data::Dump;
+    ddx $struct_pin;
+    #~ is( $get_id->($struct_pin), 42, 'Struct pointer passed and member retrieved correctly' );
+    #~ my $sum_array    = affix( $lib_path, 'sum_s64_array', '(*void, int32->int64)' );
+    #~ my @numbers      = ( 100, 200, 300, 400 );
+    #~ my $packed_array = pack( "q!*", @numbers );                                        # "q" is signed 64-bit native order
+    #~ is( $sum_array->( $packed_array, 4 ), 1000, 'Packed string buffer passed as an array pointer correctly' );
 };
+done_testing;
+__END__
 #
 subtest 'Advanced Callbacks (Reverse FFI)' => sub {
     plan 4;

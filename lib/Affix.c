@@ -214,7 +214,7 @@ XS_INTERNAL(Affix_find_symbol) {
         SV * obj_data = newSV(0);
         sv_setiv(obj_data, PTR2IV(pin));
         SV * rv = newRV_inc(obj_data);
-        sv_bless(rv, gv_stashpv("Affix::Pin", GV_ADD));
+        sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
         sv_magicext(obj_data, NULL, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
         ST(0) = sv_2mortal(rv);
         XSRETURN(1);
