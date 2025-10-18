@@ -478,7 +478,7 @@ void push_float(pTHX_ const infix_type * t, SV * sv, void * p) {
     *(float *)p = (float)SvNV(sv);
 }
 void push_double(pTHX_ const infix_type * t, SV * sv, void * p) {
-    *(double *)p = SvNV(sv);
+    *(double *)p = (double)SvNV(sv);
 }
 void push_long_double(pTHX_ const infix_type * t, SV * sv, void * p) {
     *(long double *)p = (long double)SvNV(sv);
@@ -689,6 +689,8 @@ void Affix_trigger(pTHX_ CV * cv) {
 }
 
 XS_INTERNAL(Affix_affix) {
+    // affix: ix == 0
+    // wrap:  ix == 1
     dXSARGS;
     dXSI32;
     if (items != 3)
@@ -719,37 +721,49 @@ XS_INTERNAL(Affix_affix) {
     PING;
 
     if (sv_isobject(target_sv) && sv_derived_from(target_sv, "Affix::Lib")) {
+        PING;
         IV tmp = SvIV((SV *)SvRV(target_sv));
         Affix_Lib lib = INT2PTR(Affix_Lib, tmp);
         symbol = infix_library_get_symbol(lib, symbol_name_str);
     }
     else if (_get_pin_from_sv(aTHX_ target_sv)) {
+        PING;
         Affix_Pin * pin = _get_pin_from_sv(aTHX_ target_sv);
         symbol = pin->pointer;
     }
     else if (!SvOK(target_sv)) {
+        PING;
         implicit_lib_handle = infix_library_open(NULL);
-        if (!implicit_lib_handle) {
+        if (!implicit_lib_handle)
             XSRETURN_UNDEF;
-        }
+
         symbol = infix_library_get_symbol(implicit_lib_handle, symbol_name_str);
     }
     else {
+        PING;
         const char * path = SvPV_nolen(target_sv);
         implicit_lib_handle = infix_library_open(path);
-        if (implicit_lib_handle == NULL) {
+        PING;
+        if (implicit_lib_handle == nullptr) {
+            PING;
             infix_error_details_t err = infix_get_last_error();
             croak("Failed to load library from path '%s': %s", path, err.message);
         }
+        PING;
+        warn("infix_library_get_symbol(%p, '%s')", implicit_lib_handle, symbol_name_str);
         symbol = infix_library_get_symbol(implicit_lib_handle, symbol_name_str);
+        PING;
     }
+    PING;
 
-    if (symbol == NULL)
+    if (symbol == nullptr)
         XSRETURN_UNDEF;
+    PING;
 
     Affix * affix = nullptr;
     Newxz(affix, 1, Affix);
     affix->lib_handle = implicit_lib_handle;
+    PING;
 
     const char * signature = SvPV_nolen(ST(2));
     infix_status status = infix_forward_create(&affix->infix, signature, symbol, NULL);
@@ -760,6 +774,7 @@ XS_INTERNAL(Affix_affix) {
         infix_error_details_t err = infix_get_last_error();
         croak("Failed to create trampoline: %s (code %d, pos %zu)", err.message, err.code, err.position);
     }
+    PING;
 
     affix->cif = infix_forward_get_code(affix->infix);
     size_t num_args = infix_forward_get_num_args(affix->infix);
@@ -769,30 +784,36 @@ XS_INTERNAL(Affix_affix) {
         const infix_type * type = infix_forward_get_arg_type(affix->infix, i);
         total_arena_size += infix_type_get_size(type) + infix_type_get_alignment(type);
         affix->push[i] = get_push_handler(type);
-        if (affix->push[i] == NULL)
+        if (affix->push[i] == nullptr)
             croak("Unsupported argument type in signature at index %zu", i);
     }
     const infix_type * ret_type = infix_forward_get_return_type(affix->infix);
     total_arena_size += infix_type_get_size(ret_type) + infix_type_get_alignment(ret_type);
     affix->pull = get_pull_handler(ret_type);
-    if (affix->pull == NULL)
+    if (affix->pull == nullptr)
         croak("Unsupported return type in signature");
+    PING;
 
     affix->args_arena = infix_arena_create(total_arena_size);
     char prototype_buf[256] = {0};
     for (size_t i = 0; i < num_args; ++i)
         strcat(prototype_buf, "$");
+    PING;
 
-    CV * cv_new = newXSproto_portable(ix == 0 ? rename : NULL, Affix_trigger, __FILE__, prototype_buf);
-    if (UNLIKELY(cv_new == NULL))
+    CV * cv_new = newXSproto_portable(ix == 0 ? rename : nullptr, Affix_trigger, __FILE__, prototype_buf);
+    if (UNLIKELY(cv_new == nullptr))
         croak("Failed to install new XSUB");
     CvXSUBANY(cv_new).any_ptr = (void *)affix;
+    PING;
 
     SV * obj = newRV_inc(MUTABLE_SV(cv_new));
     sv_bless(obj, gv_stashpv("Affix", GV_ADD));
     //~ overload_add(gv_stashpv("Affix", GV_ADD), "&{}", newRV_inc(MUTABLE_SV(cv_new)));
+    PING;
 
     ST(0) = sv_2mortal(obj);
+    PING;
+
     XSRETURN(1);
 }
 

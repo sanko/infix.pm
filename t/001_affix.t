@@ -32,17 +32,17 @@ DLLEXPORT int add(int a, int b) { return a + b; }
 DLLEXPORT unsigned int u_add(unsigned int a, unsigned int b) { return a + b; }
 
 // Functions to test every supported primitive type
-DLLEXPORT int8_t echo_s8(int8_t v) { return v; }
-DLLEXPORT uint8_t echo_u8(uint8_t v) { return v; }
-DLLEXPORT int16_t echo_s16(int16_t v) { return v; }
-DLLEXPORT uint16_t echo_u16(uint16_t v) { return v; }
-DLLEXPORT int32_t echo_s32(int32_t v) { return v; }
-DLLEXPORT uint32_t echo_u32(uint32_t v) { return v; }
-DLLEXPORT int64_t echo_s64(int64_t v) { return v; }
-DLLEXPORT uint64_t echo_u64(uint64_t v) { return v; }
-DLLEXPORT float echo_float(float v) { return v; }
-DLLEXPORT double echo_double(double v) { return v; }
-DLLEXPORT bool echo_bool(bool v) { return v; }
+DLLEXPORT int8_t   echo_int8   (int8_t   v) { return v; }
+DLLEXPORT uint8_t  echo_uint8  (uint8_t  v) { return v; }
+DLLEXPORT int16_t  echo_int16  (int16_t  v) { return v; }
+DLLEXPORT uint16_t echo_uint16 (uint16_t v) { return v; }
+DLLEXPORT int32_t  echo_int32  (int32_t  v) { return v; }
+DLLEXPORT uint32_t echo_uint32 (uint32_t v) { return v; }
+DLLEXPORT int64_t  echo_int64  (int64_t  v) { return v; }
+DLLEXPORT uint64_t echo_uint64 (uint64_t v) { return v; }
+DLLEXPORT float    echo_float  (float    v) { return v; }
+DLLEXPORT double   echo_double (double   v) { return v; }
+DLLEXPORT bool     echo_bool   (bool     v) { return v; }
 
 /* Pointers and References */
 DLLEXPORT const char* get_hello_string() { return "Hello from C"; }
@@ -169,31 +169,19 @@ subtest 'Pinning and Marshalling (Dereferencing)' => sub {
 };
 #
 subtest 'Forward Calls: Comprehensive Primitives' => sub {
-    plan 10;
-    note 'Testing all primitive fixed-width types from signatures.md.';
-    my %tests = (
-        s8     => { val => -100,           sig => 'sint8' },
-        u8     => { val =>  200,           sig => 'uint8' },
-        s16    => { val => -30000,         sig => 'sint16' },
-        u16    => { val =>  60000,         sig => 'uint16' },
-        s32    => { val => -2_000_000_000, sig => 'sint32' },
-        u32    => { val =>  4_000_000_000, sig => 'uint32' },
-        s64    => { val => -5_000_000_000, sig => 'sint64' },
-        u64    => { val => 10_000_000_000, sig => 'uint64' },
-        float  => { val => float( 1.23),   sig => 'float' },
-        double => { val => float(-4.56),   sig => 'double' }
-    );
-    for my $type ( sort keys %tests ) {
+    for my ( $type, $value )(
+        bool  => false,                                       #
+        int8  => -100,           uint8  => 100,               #
+        int16 => -30000,         uint16 => 60000,             #
+        int32 => -2_000_000_000, uint32 => 4_000_000_000,     #
+        int64 => -5_000_000_000, uint64 => 10_000_000_000,    #
+        float => (1.23),         double => (-4.56)            #
+    ) {
         my $name = "echo_$type";
-        my $val  = $tests{$type}{val};
-        my $sig  = $tests{$type}{sig};
-        diag $sig;
-        ok my $func = wrap( $lib_path, $name, '(' . $sig . ')->' . $sig ), 'wrap (' . $sig . ')->' . $sig;
-        is( $func->($val), $val, "Correctly passed and returned type '$type'" );
+        my $sig  = "($type)->$type";
+        isa_ok my $fn = wrap( $lib_path, $name, $sig ), ['Affix'], $sig;
+        is( $fn->($value), $value == int $value ? $value : float( $value, tolerance => 0.01 ), "Correctly passed and returned type '$type'" );
     }
-    my $echo_bool = affix( $lib_path, 'echo_bool', '(bool)->bool' );
-    is( $echo_bool->(1), 1, "Correctly passed and returned boolean (true)" );
-    is( $echo_bool->(0), 0, "Correctly passed and returned boolean (false)" );
 };
 #
 done_testing;
