@@ -76,6 +76,7 @@ typedef struct {
     const infix_type * type;     ///< Infix's description of the data type at 'pointer'. Used for dereferencing.
     infix_arena_t * type_arena;  ///< Memory arena that owns the 'type' structure.
     bool managed;                ///< If true, Perl owns the 'pointer' and will safefree() it on DESTROY.
+    UV ref_count;                ///< Refcount to prevent premature freeing when SVs are copied.
 } Affix_Pin;
 
 /// @brief Holds the necessary data for a callback, specifically the Perl subroutine to call.
@@ -104,6 +105,10 @@ extern void Affix_trigger(pTHX_ CV *);
 void ptr2sv(pTHX_ void * c_ptr, SV * perl_sv, const infix_type * type);
 // Marshals a Perl SV's value into a C pointer.
 void sv2ptr(pTHX_ SV * perl_sv, void * c_ptr, const infix_type * type);
+// Marshals a Perl HASH ref into a C struct.
+void push_struct(pTHX_ const infix_type * type, SV * sv, void * p);
+// Attaches a pin to a raw SV, making it magical.
+void _pin_sv(pTHX_ SV * sv, const infix_type * type, void * pointer, bool managed);
 
 // Functions implementing the "magic" for Affix::Pin objects (for dereferencing).
 int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg);

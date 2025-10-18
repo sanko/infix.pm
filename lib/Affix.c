@@ -101,12 +101,12 @@ XS_INTERNAL(Affix_get_last_error_message) {
     else if (err.system_error_code != 0) {
         char buf[256];
         FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                       NULL,
+                       nullptr,
                        err.system_error_code,
                        0,
                        buf,
                        sizeof(buf),
-                       NULL);
+                       nullptr);
         ST(0) = sv_2mortal(newSVpvf("System error: %s (code %ld)", buf, err.system_error_code));
     }
 #endif
@@ -120,14 +120,15 @@ XS_INTERNAL(Affix_get_last_error_message) {
 // 2. Pin System (for DATA pointers)
 // ==============================================================================
 
-static MGVTBL Affix_pin_vtbl = {Affix_get_pin, Affix_set_pin, NULL, NULL, Affix_free_pin, NULL, NULL, NULL};
+static MGVTBL Affix_pin_vtbl = {
+    Affix_get_pin, Affix_set_pin, nullptr, nullptr, Affix_free_pin, nullptr, nullptr, nullptr};
 
 Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv) {
     if (!sv_isobject(sv) || !sv_derived_from(sv, "Affix::Pin"))
-        return NULL;
+        return nullptr;
     MAGIC * mg = mg_find(SvRV(sv), PERL_MAGIC_ext);
     if (!mg || mg->mg_vtbl != &Affix_pin_vtbl)
-        return NULL;
+        return nullptr;
     return (Affix_Pin *)mg->mg_ptr;
 }
 
@@ -181,11 +182,11 @@ static MGVTBL pin_vtbl_scalar = {
     Affix_get_pin,   // get
     Affix_set_pin,   // set
     Affix_len_pin,   // len
-    NULL,            // clear
+    nullptr,         // clear
     Affix_free_pin,  // free
-    NULL,            // copy
-    NULL,            // dup
-    NULL             // local
+    nullptr,         // copy
+    nullptr,         // dup
+    nullptr          // local
 };
 
 XS_INTERNAL(Affix_find_symbol) {
@@ -204,7 +205,7 @@ XS_INTERNAL(Affix_find_symbol) {
         pin->pointer = symbol;
         pin->managed = false;
         pin->type_arena = infix_arena_create(256);
-        infix_type * void_ptr_type = NULL;
+        infix_type * void_ptr_type = nullptr;
         if (infix_type_create_pointer_to(pin->type_arena, &void_ptr_type, infix_type_create_void()) != INFIX_SUCCESS) {
             Safefree(pin);
             infix_arena_destroy(pin->type_arena);
@@ -215,7 +216,7 @@ XS_INTERNAL(Affix_find_symbol) {
         sv_setiv(obj_data, PTR2IV(pin));
         SV * rv = newRV_inc(obj_data);
         sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
-        sv_magicext(obj_data, NULL, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
+        sv_magicext(obj_data, nullptr, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
         ST(0) = sv_2mortal(rv);
         XSRETURN(1);
     }
@@ -245,7 +246,7 @@ void _pin(pTHX_ SV * sv, const infix_type * type, void * pointer) {
         }
     }
 
-    MAGIC * mg = sv_magicext(sv, NULL, PERL_MAGIC_ext, &pin_vtbl_scalar, NULL, 0);
+    MAGIC * mg = sv_magicext(sv, nullptr, PERL_MAGIC_ext, &pin_vtbl_scalar, nullptr, 0);
     {
         Newxz(pin, 1, Affix_Pin);
         pin->pointer = pointer;
@@ -260,7 +261,7 @@ XS_INTERNAL(Affix_pin) {
     if (items != 4)
         croak_xs_usage(cv, "var, lib, symbol, type");
     Affix_Lib _lib;
-    void * symbol = NULL;
+    void * symbol = nullptr;
     const char * symbol_name = SvPV_nolen(ST(0));
     // pin( my $integer, 't/src/58_affix_import_vars', 'integer', Int );
 
@@ -274,7 +275,7 @@ XS_INTERNAL(Affix_pin) {
         symbol = pin->pointer;
     }
     else if (!SvOK(ST(1))) {
-        _lib = infix_library_open(NULL);
+        _lib = infix_library_open(nullptr);
         if (!_lib)
             XSRETURN_UNDEF;
         symbol = infix_library_get_symbol(_lib, symbol_name);
@@ -282,7 +283,7 @@ XS_INTERNAL(Affix_pin) {
     else {
         const char * path = SvPV_nolen(ST(1));
         _lib = infix_library_open(path);
-        if (_lib == NULL) {
+        if (_lib == nullptr) {
             infix_error_details_t err = infix_get_last_error();
             croak("Failed to load library from path '%s': %s", path, err.message);
         }
@@ -291,13 +292,13 @@ XS_INTERNAL(Affix_pin) {
 
     void * ptr = infix_library_get_symbol(_lib, (const char *)SvPV_nolen(ST(2)));
 
-    if (ptr == NULL)
+    if (ptr == nullptr)
         croak("Failed to locate '%s'", (const char *)SvPV_nolen(ST(2)));
 
-    infix_type * type = NULL;
-    infix_arena_t * arena = NULL;
+    infix_type * type = nullptr;
+    infix_arena_t * arena = nullptr;
     const char * signature = SvPV_nolen(ST(3));
-    if (infix_type_from_signature(&type, &arena, signature, NULL) != INFIX_SUCCESS)
+    if (infix_type_from_signature(&type, &arena, signature, nullptr) != INFIX_SUCCESS)
         croak("Invalid type signature for pin: %s", signature);
 
     SV * sv = ST(0);
@@ -322,9 +323,9 @@ XS_INTERNAL(Affix_pinxxxx) {
         croak_xs_usage(cv, "Affix::pin($var, $lib, $symbol, $type)");
     PING;
 
-    void * symbol = NULL;
-    Affix_Lib implicit_lib_handle = NULL;
-    Affix_Pin * pin = NULL;
+    void * symbol = nullptr;
+    Affix_Lib implicit_lib_handle = nullptr;
+    Affix_Pin * pin = nullptr;
     SV * target_sv = ST(0);
     SV * name_sv = ST(1);
     PING;
@@ -344,7 +345,7 @@ XS_INTERNAL(Affix_pinxxxx) {
         symbol = pin->pointer;
     }
     else if (!SvOK(target_sv)) {
-        implicit_lib_handle = infix_library_open(NULL);
+        implicit_lib_handle = infix_library_open(nullptr);
         if (!implicit_lib_handle)
             XSRETURN_UNDEF;
         symbol = infix_library_get_symbol(implicit_lib_handle, symbol_name);
@@ -352,19 +353,19 @@ XS_INTERNAL(Affix_pinxxxx) {
     else {
         const char * path = SvPV_nolen(target_sv);
         implicit_lib_handle = infix_library_open(path);
-        if (implicit_lib_handle == NULL) {
+        if (implicit_lib_handle == nullptr) {
             infix_error_details_t err = infix_get_last_error();
             croak("Failed to load library from path '%s': %s", path, err.message);
         }
         symbol = infix_library_get_symbol(implicit_lib_handle, symbol_name);
     }
 
-    if (symbol == NULL)
+    if (symbol == nullptr)
         XSRETURN_UNDEF;
 
-    infix_type * type = NULL;
-    infix_arena_t * arena = NULL;
-    if (infix_type_from_signature(&type, &arena, signature, NULL) != INFIX_SUCCESS)
+    infix_type * type = nullptr;
+    infix_arena_t * arena = nullptr;
+    if (infix_type_from_signature(&type, &arena, signature, nullptr) != INFIX_SUCCESS)
         croak("Invalid type signature for pin: %s", signature);
 
     _pin(aTHX_ target_sv, type, symbol);
@@ -381,9 +382,9 @@ XS_INTERNAL(Affix_pinxxxx) {
         croak_xs_usage(cv, "type_signature, initial_value");
     const char * signature = SvPV_nolen(ST(0));
     SV * initial_value_sv = ST(1);
-    infix_type * type = NULL;
-    infix_arena_t * arena = NULL;
-    if (infix_type_from_signature(&type, &arena, signature, NULL) != INFIX_SUCCESS)
+    infix_type * type = nullptr;
+    infix_arena_t * arena = nullptr;
+    if (infix_type_from_signature(&type, &arena, signature, nullptr) != INFIX_SUCCESS)
         croak("Invalid type signature for pin: %s", signature);
     void * ptr = safecalloc(1, infix_type_get_size(type));
     sv2ptr(aTHX_ initial_value_sv, ptr, type);
@@ -395,7 +396,7 @@ XS_INTERNAL(Affix_pinxxxx) {
     sv_setiv(sv_inner, PTR2IV(pin));
     SV * sv_outer = newRV_inc(sv_inner);
     sv_bless(sv_outer, gv_stashpv("Affix::Pin", GV_ADD));
-    sv_magicext(sv_inner, NULL, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
+    sv_magicext(sv_inner, nullptr, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
     ST(0) = sv_2mortal(sv_outer);
     XSRETURN(1);*/
 }
@@ -411,14 +412,14 @@ XS_INTERNAL(Affix_sizeof) {
     const char * signature = SvPV_nolen(ST(0));
 
     // These will hold the results from the infix parser.
-    infix_type * type = NULL;
-    infix_arena_t * arena = NULL;
+    infix_type * type = nullptr;
+    infix_arena_t * arena = nullptr;
 
     // Ask infix to parse the signature into a type description.
-    // We pass NULL for the registry as we are only dealing with built-in types here.
+    // We pass nullptr for the registry as we are only dealing with built-in types here.
     // For sizeof(@MyStruct), a registry would need to be passed.
     // NOTE: This could be a future enhancement.
-    infix_status status = infix_type_from_signature(&type, &arena, signature, NULL);
+    infix_status status = infix_type_from_signature(&type, &arena, signature, nullptr);
 
     // After parsing, we MUST clean up the arena to avoid memory leaks.
     // A scope guard pattern using a goto is clean and robust in C for this.
@@ -496,22 +497,43 @@ void push_uint128(pTHX_ const infix_type * t, SV * sv, void * p) {
 #endif
 
 void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
-    PING;
+    // Case 1: The SV passed is already an object representing a C pointer.
+    // We just extract the raw pointer value and pass it along.
     if (_get_pin_from_sv(aTHX_ sv)) {
         Affix_Pin * pin = _get_pin_from_sv(aTHX_ sv);
         *(void **)ptr = pin->pointer;
+        return;
     }
-    else if (sv_isobject(sv) && sv_derived_from(sv, "Affix::Callback")) {
+    if (sv_isobject(sv) && sv_derived_from(sv, "Affix::Callback")) {
         IV tmp = SvIV((SV *)SvRV(sv));
         Affix_Callback * cb = INT2PTR(Affix_Callback *, tmp);
         *(void **)ptr = infix_reverse_get_code(cb->reverse_ctx);
+        return;
     }
-    else if (SvOK(sv)) {
-        *(void **)ptr = INT2PTR(void *, SvIV(sv));
+
+    const infix_type * pointee_type = type->meta.pointer_info.pointee_type;
+
+    // Case 2: The pointer is a generic `void*`. We can't dereference it to
+    // marshal data, so we just treat the Perl scalar as a raw memory address.
+    if (pointee_type->category == INFIX_TYPE_VOID) {
+        *(void **)ptr = SvOK(sv) ? INT2PTR(void *, SvIV(sv)) : nullptr;
+        return;
     }
-    else {
-        *(void **)ptr = NULL;
-    }
+
+    // Case 3: The pointer is typed (e.g., int*, struct Foo*). This means we
+    // are passing a Perl value BY REFERENCE. We need to allocate temporary
+    // memory for the C function to use, marshal the Perl value into it, and
+    // pass a pointer to that temporary memory.
+    void * dest_c_ptr = safecalloc(1, infix_type_get_size(pointee_type));
+
+    if (!dest_c_ptr)
+        croak("Failed to allocate from arena for by-reference argument");
+
+    // Recursively call the main marshalling function to populate the temporary memory.
+    _pin(aTHX_ sv, pointee_type, dest_c_ptr);
+
+    // Finally, set the actual C function argument to be a pointer to our temporary memory.
+    *(void **)ptr = dest_c_ptr;
 }
 
 //
@@ -614,21 +636,36 @@ Affix_Push get_push_handler(const infix_type * type) {
         return push_handlers[type->meta.primitive_id];
     if (type->category == INFIX_TYPE_POINTER)
         return push_pointer;
-    return NULL;
+    return nullptr;
 }
 Affix_Pull get_pull_handler(const infix_type * type) {
-    if (type->category == INFIX_TYPE_VOID)
-        return pull_void;
-    if (type->category == INFIX_TYPE_PRIMITIVE)
+    switch (type->category) {
+    case INFIX_TYPE_PRIMITIVE:  ///< A built-in type like `int`, `float`, `double`.
         return pull_handlers[type->meta.primitive_id];
-    if (type->category == INFIX_TYPE_POINTER)
+    case INFIX_TYPE_POINTER:  ///< A generic `void*` pointer type.
         return pull_pointer;
-    return NULL;
+    case INFIX_TYPE_STRUCT:              ///< A user-defined structure (`struct`).
+    case INFIX_TYPE_UNION:               ///< A user-defined union (`union`).
+    case INFIX_TYPE_ARRAY:               ///< A fixed-size array.
+    case INFIX_TYPE_REVERSE_TRAMPOLINE:  ///< A callback wrapper.
+    case INFIX_TYPE_ENUM:                ///< A C-style enumeration, with an underlying integer type.
+    case INFIX_TYPE_COMPLEX:             ///< A `_Complex` number type.
+    case INFIX_TYPE_VECTOR:              ///< A SIMD vector type.
+    case INFIX_TYPE_NAMED_REFERENCE:     ///< A reference to a named type (e.g., `struct<Node>`).
+        return nullptr;
+    case INFIX_TYPE_VOID:
+        return pull_void;
+    }
 }
 void ptr2sv(pTHX_ void * c_ptr, SV * perl_sv, const infix_type * type) {
     Affix_Pull h = get_pull_handler(type);
-    if (!h)
-        croak("Cannot convert C type to Perl SV: unsupported type");
+    if (!h) {
+        char buffer[128];
+        if (infix_type_print(buffer, sizeof(buffer), type, INFIX_DIALECT_SIGNATURE) == INFIX_SUCCESS)
+            croak("Cannot convert C type to Perl SV. Unsupported type: %s", buffer);
+
+        croak("Cannot convert C type to Perl SV. Unsupported type.");
+    }
     SV * new_sv = h(aTHX_ type, c_ptr);
     sv_setsv_mg(perl_sv, new_sv);
 }
@@ -645,13 +682,14 @@ void sv2ptr(pTHX_ SV * perl_sv, void * c_ptr, const infix_type * type) {
 void Affix_trigger(pTHX_ CV * cv) {
     dSP;
     dAXMARK;
+    dMY_CXT;
     PING;
 
     Affix * affix = (Affix *)CvXSUBANY(cv).any_ptr;
     PING;
 
     if (!affix)
-        croak("Internal error: Affix context is NULL in trigger");
+        croak("Internal error: Affix context is nullptr in trigger");
     PING;
 
     size_t num_args = infix_forward_get_num_args(affix->infix);
@@ -663,6 +701,7 @@ void Affix_trigger(pTHX_ CV * cv) {
               (UV)(SP - MARK));
     PING;
 
+    // Set the thread-local context so marshalling functions can access the arena.
     affix->args_arena->current_offset = 0;
     void ** c_args = infix_arena_alloc(affix->args_arena, sizeof(void *) * num_args, _Alignof(void *));
     for (size_t i = 0; i < num_args; ++i) {
@@ -676,10 +715,12 @@ void Affix_trigger(pTHX_ CV * cv) {
         PING;
     }
     PING;
-
+    // Unset the context variable now that marshalling is complete.
     const infix_type * ret_type = infix_forward_get_return_type(affix->infix);
     void * ret_ptr =
         infix_arena_alloc(affix->args_arena, infix_type_get_size(ret_type), infix_type_get_alignment(ret_type));
+    PING;
+
     affix->cif(ret_ptr, c_args);
     PING;
 
@@ -697,15 +738,15 @@ XS_INTERNAL(Affix_affix) {
         croak_xs_usage(cv, "Affix::affix($target, $name_spec, $signature)");
     PING;
 
-    void * symbol = NULL;
-    char * rename = NULL;
-    Affix_Lib implicit_lib_handle = NULL;
+    void * symbol = nullptr;
+    char * rename = nullptr;
+    Affix_Lib implicit_lib_handle = nullptr;
     SV * target_sv = ST(0);
     SV * name_sv = ST(1);
     PING;
 
-    const char * symbol_name_str = NULL;
-    const char * rename_str = NULL;
+    const char * symbol_name_str = nullptr;
+    const char * rename_str = nullptr;
 
     if (SvROK(name_sv) && SvTYPE(SvRV(name_sv)) == SVt_PVAV) {
         AV * name_av = (AV *)SvRV(name_sv);
@@ -733,7 +774,7 @@ XS_INTERNAL(Affix_affix) {
     }
     else if (!SvOK(target_sv)) {
         PING;
-        implicit_lib_handle = infix_library_open(NULL);
+        implicit_lib_handle = infix_library_open(nullptr);
         if (!implicit_lib_handle)
             XSRETURN_UNDEF;
 
@@ -766,7 +807,7 @@ XS_INTERNAL(Affix_affix) {
     PING;
 
     const char * signature = SvPV_nolen(ST(2));
-    infix_status status = infix_forward_create(&affix->infix, signature, symbol, NULL);
+    infix_status status = infix_forward_create(&affix->infix, signature, symbol, nullptr);
     if (status != INFIX_SUCCESS) {
         if (affix->lib_handle)
             infix_library_close(affix->lib_handle);
@@ -830,14 +871,14 @@ XS_INTERNAL(Affix_DESTROY) {
         affix = (Affix *)CvXSUBANY(cv_ptr).any_ptr;
     }
     STMT_END;
-    if (affix != NULL) {
-        if (affix->lib_handle != NULL)
+    if (affix != nullptr) {
+        if (affix->lib_handle != nullptr)
             infix_library_close(affix->lib_handle);
-        if (affix->args_arena != NULL)
+        if (affix->args_arena != nullptr)
             infix_arena_destroy(affix->args_arena);
-        if (affix->infix != NULL)
+        if (affix->infix != nullptr)
             infix_forward_destroy(affix->infix);
-        if (affix->push != NULL)
+        if (affix->push != nullptr)
             Safefree(affix->push);
         Safefree(affix);
     }
@@ -925,7 +966,7 @@ void _affix_callback_handler_entry(infix_context_t * ctx, void * retval, void **
         Affix_Push pusher = get_push_handler(ret_type);
         PING;
 
-        if (pusher == NULL)
+        if (pusher == nullptr)
             croak("Unsupported callback return type");
         PING;
 
@@ -975,9 +1016,9 @@ XS_INTERNAL(Affix_callback) {
     cb_data->perl_sub = newRV_inc(coderef);
     storeTHX(cb_data->perl);
     PING;
-    infix_reverse_t * reverse_ctx = NULL;
+    infix_reverse_t * reverse_ctx = nullptr;
     infix_status status = infix_reverse_create_closure(
-        &reverse_ctx, signature, (void *)_affix_callback_handler_entry, (void *)cb_data, NULL);
+        &reverse_ctx, signature, (void *)_affix_callback_handler_entry, (void *)cb_data, nullptr);
     PING;
     if (status != INFIX_SUCCESS) {
         SvREFCNT_dec(cb_data->perl_sub);
@@ -1050,7 +1091,7 @@ XS_INTERNAL(Affix_END) {
             }
         }
         hv_undef(MY_CXT.lib_registry);  // Frees the hash itself
-        MY_CXT.lib_registry = NULL;     // Guards against double-free
+        MY_CXT.lib_registry = nullptr;  // Guards against double-free
     }
     XSRETURN_EMPTY;
 }
@@ -1104,7 +1145,7 @@ void _DumpHex(pTHX_ const void * addr, size_t len, const char * file, int line) 
 
 #define DD(scalar) _DD(aTHX_ scalar, __FILE__, __LINE__)
 void _DD(pTHX_ SV * scalar, const char * file, int line) {
-    Perl_load_module(aTHX_ PERL_LOADMOD_NOIMPORT, newSVpvs("Data::Printer"), NULL, NULL, NULL);
+    Perl_load_module(aTHX_ PERL_LOADMOD_NOIMPORT, newSVpvs("Data::Printer"), nullptr, nullptr, nullptr);
     if (!get_cvs("Data::Printer::p", GV_NOADD_NOINIT | GV_NO_SVGMAGIC))
         return;
 
@@ -1137,6 +1178,15 @@ void _DD(pTHX_ SV * scalar, const char * file, int line) {
     FREETMPS;
     LEAVE;
 }
+
+XS_INTERNAL(Affix_sv_dump) {
+    dXSARGS;
+    if (items != 1)
+        croak_xs_usage(cv, "sv");
+    sv_dump(ST(0));
+    XSRETURN_EMPTY;
+}
+
 // ==============================================================================
 // 6. XS Bootstrap
 // ==============================================================================
@@ -1200,6 +1250,10 @@ void boot_Affix(pTHX_ CV * cv) {
     export_function("Affix", "get_last_error_message", "core");
 
     export_function("Affix", "callback", "callback");
+
+    // Debugging
+    (void)newXSproto_portable("Affix::sv_dump", Affix_sv_dump, __FILE__, "$");
+    //
 
     Perl_xs_boot_epilog(aTHX_ ax);
 }

@@ -9,18 +9,12 @@ $|++;
 
 # This C code will be compiled into a temporary library for many of the tests.
 my $C_CODE = <<'END_C';
+#include "std.h"
 //ext: .c
 
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h> // For strcmp
-
-// Using a C99 style header to ensure fixed-width types are available.
-#if defined(_MSC_VER)
-    #define DLLEXPORT __declspec(dllexport)
-#else
-    #define DLLEXPORT
-#endif
 
 /* Expose global vars */
 DLLEXPORT int global_counter = 42;
@@ -55,14 +49,13 @@ DLLEXPORT int deref_and_add(int* p) {
 
 // Modifies the integer pointed to by the argument.
 DLLEXPORT void modify_int_ptr(int* p, int new_val) {
-    if (p) *p = new_val;
+    if (p) *p = new_val+1;
 }
 
 // Takes a pointer to a pointer and verifies the string.
 DLLEXPORT int check_string_ptr(char** s) {
-    if (s && *s && strcmp(*s, "perl") == 0) {
+    if (s && *s && strcmp(*s, "perl") == 0)
         return 1; // success
-    }
     return 0; // failure
 }
 
@@ -75,6 +68,10 @@ typedef struct {
 
 // "Constructor" for the struct.
 DLLEXPORT void init_struct(MyStruct* s, int32_t id, double value, const char* label) {
+    warn("Inside init_struct");
+    warn("    id: %d", id);
+    warn("    value: %f", value);
+    warn("    label: %s", label);
     if (s) {
         s->id = id;
         s->value = value;
@@ -132,13 +129,11 @@ subtest 'Library Loading and Lifecycle' => sub {
 };
 #
 subtest 'Symbol Finding' => sub {
-    plan 3;
+    plan 2;
     my $lib    = load_library($lib_path);
     my $symbol = find_symbol( $lib, 'add' );
-    isa_ok( $symbol, ['Affix::Lib'], 'find_symbol returns an Affix::Lib object' );
-    my $bad_symbol = find_symbol( $lib, 'non_existent_symbol_12345' );
-    is( $bad_symbol, undef, 'find_symbol returns undef for a non-existent symbol' );
-    pass('Pin object from find_symbol will be destroyed at scope exit');
+    isa_ok( $symbol, ['Affix::Pointer'], 'find_symbol returns an Affix::Pointer object' );
+    is find_symbol( $lib, 'non_existent_symbol_12345' ), U(), 'find_symbol returns undef for a non-existent symbol';
 };
 #
 subtest 'Pinning and Marshalling (Dereferencing)' => sub {
@@ -184,25 +179,18 @@ subtest 'Forward Calls: Comprehensive Primitives' => sub {
     }
 };
 #
-done_testing;
-__END__
 subtest 'Forward Calls: Pointers and References' => sub {
-    plan 4;
+    plan 5;
     note 'Testing pointer marshalling, including pass-by-reference.';
-    my $get_string  = affix( $lib_path, 'get_hello_string', '()->*char' );
-    my $string_addr = $get_string->();
-
-    # We can't easily dereference this raw address in pure Perl,
-    # but we can verify it's a non-zero integer (a valid-looking address).
-    is( ref($string_addr), '', 'Returned pointer is a scalar integer' );
-    ok( $string_addr > 0, 'Returned pointer is a non-null address' );
-    my $deref = affix( $lib_path, 'deref_and_add', 'sint32(*sint32)' );
-
-    #~ my $int_pin = pin( 'sint32', 50 );
-    #~ is( $deref->($int_pin), 60, 'Correctly passed a pin, C dereferenced it and returned value' );
-    #~ my $modify = affix( $lib_path, 'modify_int_ptr', 'void(*sint32, sint32)' );
-    #~ $modify->( $int_pin, 999 );
-    #~ is( ${$int_pin}, 999, 'C function correctly modified the value in our pin (pass-by-reference)' );
+    isa_ok my $get_string = wrap( $lib_path, 'get_hello_string', '()->*char' ), ['Affix'];
+    is $get_string->(), 'Hello from C', 'Hello from C';
+    #
+    isa_ok my $deref = wrap( $lib_path, 'deref_and_add', '(*int32)->int32' ), ['Affix'];
+    #
+    isa_ok my $modify = wrap( $lib_path, 'modify_int_ptr', '(*int32, int32)->void' ), ['Affix'];
+    $modify->( my $int_pin, 999 );
+    Affix::sv_dump($int_pin);
+    is $int_pin, 1000, 'C function correctly modified the value in our pin (pass-by-reference)';
 };
 #
 subtest 'Forward Calls: Structs and Arrays' => sub {
@@ -210,23 +198,25 @@ subtest 'Forward Calls: Structs and Arrays' => sub {
     note 'Testing passing pointers to complex data structures.';
 
     # The signature for MyStruct is '{s32, f64, p}'
-     #~ = pin(my $struct_pin, '{int32, float64, *char}');
-     #~ DLLEXPORT void init_struct(MyStruct* s, int32_t id, double value, const char* label) {
+    #~ = pin(my $struct_pin, '{int32, float64, *char}');
+    #~ DLLEXPORT void init_struct(MyStruct* s, int32_t id, double value, const char* label) {
     #~ DLLEXPORT int32_t get_struct_id(MyStruct* s) {
+    #~ typedef struct {
+    #~      int32_t id;
+    #~      double value;
+    #~      const char* label;
+    #~ } MyStruct;
+    isa_ok my $init   = wrap( $lib_path, 'init_struct',   '(*{id:int32, value:float64, label:*char}, int32, double, *char)->void' ), ['Affix'];
+    isa_ok my $get_id = wrap( $lib_path, 'get_struct_id', '(*{id:int32, float64, *char})->int32' ),                                  ['Affix'];
 
-    my $init   = affix( $lib_path, 'init_struct',   '(*{int32, float64, *char}, int32, float64, *char)->void' );
-    my $get_id = affix( $lib_path, 'get_struct_id', '(*{int32, float64, *char})->int32' );
-    #
+    #    #~ id:uint64
+    $init->( my $struct_pin, 42, 3.14, 'Test Label' );
 
-    my $label  = 'Test Label';
-    $init->( my ($struct_pin), 42, 3.14, $label );
-    use Data::Dump;
-    ddx $struct_pin;
-    #~ is( $get_id->($struct_pin), 42, 'Struct pointer passed and member retrieved correctly' );
-    #~ my $sum_array    = affix( $lib_path, 'sum_s64_array', '(*void, int32->int64)' );
-    #~ my @numbers      = ( 100, 200, 300, 400 );
-    #~ my $packed_array = pack( "q!*", @numbers );                                        # "q" is signed 64-bit native order
-    #~ is( $sum_array->( $packed_array, 4 ), 1000, 'Packed string buffer passed as an array pointer correctly' );
+    #~ use Data::Dump;
+    #~ ddx $struct_pin;
+    is $get_id->($struct_pin), 42, 'Struct pointer passed and member retrieved correctly';
+    isa_ok my $sum_array = wrap( $lib_path, 'sum_s64_array', '(*int32, int32)->int64' ), ['Affix'];
+    is $sum_array->( [ 100, 200, 300, 400 ], 4 ), 1000, 'AV* passed as array pointer';
 };
 done_testing;
 __END__
