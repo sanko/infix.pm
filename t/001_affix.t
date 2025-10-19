@@ -42,9 +42,6 @@ DLLEXPORT bool     echo_bool   (bool     v) { return v; }
 DLLEXPORT const char* get_hello_string() { return "Hello from C"; }
 DLLEXPORT bool set_hello_string(const char * hi) { return strcmp(hi, "Hello from Perl")==0; }
 
-
-
-
 // Dereferences a pointer and returns its value + 10.
 DLLEXPORT int deref_and_add(int* p) {
     if (!p) return -1;
@@ -53,7 +50,7 @@ DLLEXPORT int deref_and_add(int* p) {
 
 // Modifies the integer pointed to by the argument.
 DLLEXPORT void modify_int_ptr(int* p, int new_val) {
-    if (p) *p = new_val+1;
+    if (p) *p = new_val + 1;
 }
 
 // Takes a pointer to a pointer and verifies the string.
@@ -87,13 +84,10 @@ DLLEXPORT int32_t get_struct_id(MyStruct* s) {
 // Sums an array of 64-bit integers.
 DLLEXPORT int64_t sum_s64_array(int64_t* arr, int len) {
     int64_t total = 0;
-    for (int i = 0; i < len; i++) {
+    for (int i = 0; i < len; i++)
         total += arr[i];
-    }
     return total;
 }
-
-/* --- New Additions for Kitchen Sink Test --- */
 
 /* Nested Structs */
 typedef struct {
@@ -243,7 +237,7 @@ subtest 'Forward Calls: Comprehensive Primitives' => sub {
         int16 => -30000,         uint16 => 60000,             #
         int32 => -2_000_000_000, uint32 => 4_000_000_000,     #
         int64 => -5_000_000_000, uint64 => 10_000_000_000,    #
-        float => (1.23),         double => (-4.56)            #
+        float =>  1.23,          double => -4.56              #
     ) {
         my $name = "echo_$type";
         my $sig  = "($type)->$type";
@@ -267,8 +261,6 @@ subtest 'Forward Calls: Pointers and References' => sub {
         is $int_pin, 1000, 'C function correctly modified the value in our pin (pass-by-reference)';
     }
 };
-done_testing;
-__END__
 subtest 'Forward Calls: Structs and Arrays' => sub {
     plan 5;
     note 'Testing passing pointers to complex data structures.';
@@ -279,15 +271,18 @@ subtest 'Forward Calls: Structs and Arrays' => sub {
     isa_ok my $sum_array = wrap( $lib_path, 'sum_s64_array', '(*int64, int32)->int64' ), ['Affix'];
     is $sum_array->( [ 100, 200, 300, 400 ], 4 ), 1000, 'AV* passed as array pointer';
 };
-
-
-
-# ==============================================================================
-# NEW "KITCHEN SINK" TESTS
-# ==============================================================================
-subtest 'Type registry' => sub {
+subtest typedef => sub {
     my $reg = Affix::Registry->new;
     isa_ok $reg, ['Affix::Registry'], 'Affix::Registry->new creates a registry object';
+    #
+    $reg->define('@Point    = { x: int32, y: int32 };');
+
+    #~ $reg->define('@Rect     = { top_left: @Point, bottom_right: @Point, name: *char };');
+};
+done_testing;
+__END__
+subtest 'Type registry' => sub {
+
     $reg->define('@Point    = { x: int32, y: int32 };');
     $reg->define('@Rect     = { top_left: @Point, bottom_right: @Point, name: *char };');
     $reg->define('@MyStruct = { id: int32, value: float64, label: *char };');

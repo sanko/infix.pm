@@ -165,7 +165,7 @@ int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg) {
 bool is_pin(pTHX_ SV * sv) {
     //~ PING;
     //~ sv_dump(sv);
-    if (SvOK(sv) && mg_findext(sv, PERL_MAGIC_ext, &Affix_pin_vtbl))
+    if (SvOK(sv) && SvTYPE(sv) < SVt_PVAV && mg_findext(sv, PERL_MAGIC_ext, &Affix_pin_vtbl))
         return true;
     //~ PING;
     return false;
