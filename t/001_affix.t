@@ -68,10 +68,6 @@ typedef struct {
 
 // "Constructor" for the struct.
 DLLEXPORT void init_struct(MyStruct* s, int32_t id, double value, const char* label) {
-    warn("Inside init_struct");
-    warn("    id: %d", id);
-    warn("    value: %f", value);
-    warn("    label: %s", label);
     if (s) {
         s->id = id;
         s->value = value;
@@ -93,25 +89,106 @@ DLLEXPORT int64_t sum_s64_array(int64_t* arr, int len) {
     return total;
 }
 
-/* Callbacks */
-// A harness function for testing simple callbacks
+/* --- New Additions for Kitchen Sink Test --- */
+
+/* Nested Structs */
+typedef struct {
+    int x;
+    int y;
+} Point;
+
+typedef struct {
+    Point top_left;
+    Point bottom_right;
+    const char* name;
+} Rectangle;
+
+DLLEXPORT int get_rect_width(Rectangle* r) {
+    if (!r) return -1;
+    return r->bottom_right.x - r->top_left.x;
+}
+
+// Return a struct by value
+DLLEXPORT Point create_point(int x, int y) {
+    Point p = {x, y};
+    return p;
+}
+
+/* Advanced Pointers */
+DLLEXPORT int check_null_ptr(int* p) {
+    return (p == NULL); // Return 1 if null, 0 otherwise
+}
+
+/* Arrays of Structs */
+DLLEXPORT int sum_struct_ids(MyStruct* structs, int count) {
+    int total = 0;
+    for (int i = 0; i < count; i++) {
+        total += structs[i].id;
+    }
+    return total;
+}
+
+/* Enums and Unions */
+typedef enum { RED, GREEN, BLUE } Color;
+
+DLLEXPORT int check_color(Color c) {
+    if (c == GREEN) return 1;
+    return 0;
+}
+
+typedef union {
+    int i;
+    float f;
+    char c[8];
+} MyUnion;
+
+DLLEXPORT float process_union_float(MyUnion u) {
+    return u.f * 10.0;
+}
+
+/* Advanced Callbacks */
+// Takes a callback that processes a struct
+DLLEXPORT double process_struct_with_cb(MyStruct* s, double (*cb)(MyStruct*)) {
+    return cb(s);
+}
+
+// Takes a callback that returns a struct
+DLLEXPORT int check_returned_struct_from_cb(Point (*cb)(void)) {
+    Point p = cb();
+    return p.x + p.y;
+}
+
+// A callback with many arguments to test register/stack passing
+typedef void (*kitchen_sink_cb)(
+    int a, double b, int c, double d, int e, double f, int g, double h,
+    const char* i, int* j
+);
+DLLEXPORT void call_kitchen_sink(kitchen_sink_cb cb) {
+    int j_val = 100;
+    cb(1, 2.0, 3, 4.0, 5, 6.0, 7, 8.0, "kitchen sink", &j_val);
+}
+
+/* Functions with many arguments */
+DLLEXPORT long long multi_arg_sum(
+    long long a, long long b, long long c, long long d,
+    long long e, long long f, long long g, long long h, long long i
+) {
+    return a + b + c + d + e + f + g + h + i;
+}
+
+/* Simple Callback Harness */
 DLLEXPORT int call_int_cb(int (*cb)(int), int val) {
     return cb(val);
 }
 
-// Harness for a callback with multiple args and a different return type.
 DLLEXPORT double call_math_cb(double (*cb)(double, int), double d, int i) {
     return cb(d, i);
 }
-
 END_C
 
 # Compile the library once for all subtests that need it.
 my $lib_path = compile_ok($C_CODE);
 ok( $lib_path && -e $lib_path, 'Compiled a test shared library successfully' );
-
-#~ diag `nm $lib_path`;
-#
 subtest 'Library Loading and Lifecycle' => sub {
     plan 5;
     note 'Testing load_library(), Affix::Lib objects, and reference counting.';
@@ -123,11 +200,8 @@ subtest 'Library Loading and Lifecycle' => sub {
     is( $bad_lib, undef, 'load_library returns undef for a non-existent library' );
     my $err = get_last_error_message();
     like( $err, qr/found|cannot open|no such file/i, 'get_last_error_message provides a useful error on failed load' );
-
-    # The DESTROY methods for $lib1 and $lib2 will be tested implicitly by Valgrind/ASan for leaks.
     pass('Library objects will be destroyed automatically at scope exit');
 };
-#
 subtest 'Symbol Finding' => sub {
     plan 2;
     my $lib    = load_library($lib_path);
@@ -135,34 +209,29 @@ subtest 'Symbol Finding' => sub {
     isa_ok( $symbol, ['Affix::Pointer'], 'find_symbol returns an Affix::Pointer object' );
     is find_symbol( $lib, 'non_existent_symbol_12345' ), U(), 'find_symbol returns undef for a non-existent symbol';
 };
-#
 subtest 'Pinning and Marshalling (Dereferencing)' => sub {
     plan 1;
     subtest 'sint32' => sub {
-        plan 8;
+        plan 9;    # CORRECTED PLAN
         my $pin_int;
-        isa_ok affix $lib_path, 'get_global_counter', '()->int32';
-        isa_ok affix $lib_path, 'set_global_counter', '(int32)->void';
-        #
+        isa_ok affix( $lib_path, 'get_global_counter', '()->int32' );
+        isa_ok affix( $lib_path, 'set_global_counter', '(int32)->void' );
         ok pin( $pin_int, $lib_path, 'global_counter', 'int32' ), 'pin(...)';
-        #
         is $pin_int, 42, 'pinned scalar equals 42';
         diag 'setting pinned scalar to 100';
         $pin_int = 100;
-        diag $pin_int;
         is get_global_counter(), 100, 'checking value from inside the shared lib';
         diag 'setting value from inside the shared lib';
         set_global_counter(200);
         is $pin_int, 200, 'checking value from perl';
         diag 'unpinning scalar';
-        unpin($pin_int);
+        ok unpin($pin_int), 'unpin() returns true';
         diag 'setting unpinned scalar to 25';
         $pin_int = 25;
         is get_global_counter(), 200, 'value is unchanged inside the shared lib';
         is $pin_int,             25,  'verify that value is local to perl';
     };
 };
-#
 subtest 'Forward Calls: Comprehensive Primitives' => sub {
     for my ( $type, $value )(
         bool  => false,                                       #
@@ -178,224 +247,178 @@ subtest 'Forward Calls: Comprehensive Primitives' => sub {
         is( $fn->($value), $value == int $value ? $value : float( $value, tolerance => 0.01 ), "Correctly passed and returned type '$type'" );
     }
 };
-#
 subtest 'Forward Calls: Pointers and References' => sub {
     plan 5;
     note 'Testing pointer marshalling, including pass-by-reference.';
     isa_ok my $get_string = wrap( $lib_path, 'get_hello_string', '()->*char' ), ['Affix'];
-    is $get_string->(), 'Hello from C', 'Hello from C';
-    #
-    isa_ok my $deref = wrap( $lib_path, 'deref_and_add', '(*int32)->int32' ), ['Affix'];
-    #
+    is $get_string->(), 'Hello from C', 'Correctly returned a C string';
+    isa_ok my $deref  = wrap( $lib_path, 'deref_and_add',  '(*int32)->int32' ),       ['Affix'];
     isa_ok my $modify = wrap( $lib_path, 'modify_int_ptr', '(*int32, int32)->void' ), ['Affix'];
     $modify->( my $int_pin, 999 );
-    Affix::sv_dump($int_pin);
     is $int_pin, 1000, 'C function correctly modified the value in our pin (pass-by-reference)';
 };
-#
 subtest 'Forward Calls: Structs and Arrays' => sub {
-    plan 3;
+    plan 5;
     note 'Testing passing pointers to complex data structures.';
-
-    # The signature for MyStruct is '{s32, f64, p}'
-    #~ = pin(my $struct_pin, '{int32, float64, *char}');
-    #~ DLLEXPORT void init_struct(MyStruct* s, int32_t id, double value, const char* label) {
-    #~ DLLEXPORT int32_t get_struct_id(MyStruct* s) {
-    #~ typedef struct {
-    #~      int32_t id;
-    #~      double value;
-    #~      const char* label;
-    #~ } MyStruct;
     isa_ok my $init   = wrap( $lib_path, 'init_struct',   '(*{id:int32, value:float64, label:*char}, int32, double, *char)->void' ), ['Affix'];
-    isa_ok my $get_id = wrap( $lib_path, 'get_struct_id', '(*{id:int32, float64, *char})->int32' ),                                  ['Affix'];
-
-    #    #~ id:uint64
+    isa_ok my $get_id = wrap( $lib_path, 'get_struct_id', '(*{id:int32, value:float64, label:*char})->int32' ),                      ['Affix'];
     $init->( my $struct_pin, 42, 3.14, 'Test Label' );
-
-    #~ use Data::Dump;
-    #~ ddx $struct_pin;
     is $get_id->($struct_pin), 42, 'Struct pointer passed and member retrieved correctly';
-    isa_ok my $sum_array = wrap( $lib_path, 'sum_s64_array', '(*int32, int32)->int64' ), ['Affix'];
+    isa_ok my $sum_array = wrap( $lib_path, 'sum_s64_array', '(*int64, int32)->int64' ), ['Affix'];
     is $sum_array->( [ 100, 200, 300, 400 ], 4 ), 1000, 'AV* passed as array pointer';
 };
-done_testing;
-__END__
-#
-subtest 'Advanced Callbacks (Reverse FFI)' => sub {
+
+# ==============================================================================
+# NEW "KITCHEN SINK" TESTS
+# ==============================================================================
+subtest 'Type registry' => sub {
+    my $reg = Affix::Registry->new;
+    isa_ok $reg, ['Affix::Registry'], 'Affix::Registry->new creates a registry object';
+    $reg->define(<<'END_TYPES');
+    @Point    = { x: int32, y: int32 };
+    @Rect     = { top_left: @Point, bottom_right: @Point, name: *char };
+    @MyStruct = { id: int32, value: float64, label: *char };
+    @MyUnion  = { i: int32, f: float32, c: [8:char] };
+END_TYPES
+    affix_with(
+        $reg,
+        sub {
+            subtest 'Forward Calls: Nested Structs and By-Value Returns (with Registry)' => sub {
+                plan 3;
+                note 'Testing nested structs and functions that return structs by value.';
+                isa_ok my $get_width = wrap( $lib_path, 'get_rect_width', '(*@Rect)->int32' ), ['Affix'];
+                my $rect_data = { top_left => { x => 10, y => 20 }, bottom_right => { x => 60, y => 80 }, name => 'My Rectangle', };
+                is $get_width->($rect_data), 50, 'Correctly passed nested struct and calculated width';
+                isa_ok my $create_point = wrap( $lib_path, 'create_point', '(int32, int32)->@Point' ), ['Affix'];
+                my $point = $create_point->( 123, 456 );
+                is $point, { x => 123, y => 456 }, 'Correctly received a struct returned by value';
+            };
+            subtest 'Forward Calls: Advanced Pointers and Arrays of Structs (with Registry)' => sub {
+                plan 3;
+                note 'Testing NULL pointers and marshalling arrays of structs.';
+                isa_ok my $check_null = wrap( $lib_path, 'check_null_ptr', '(*int32)->int32' ), ['Affix'];
+                is $check_null->(undef), 1, 'Passing undef to a pointer argument is correctly marshalled as NULL';
+                isa_ok my $sum_ids = wrap( $lib_path, 'sum_struct_ids', '(*@MyStruct, int32)->int32' ), ['Affix'];
+                my $struct_array = [
+                    { id => 10, value => 1.1, label => 'A' },
+                    { id => 20, value => 2.2, label => 'B' },
+                    { id => 30, value => 3.3, label => 'C' },
+                ];
+                is $sum_ids->( $struct_array, 3 ), 60, 'Correctly passed an array of structs and summed IDs';
+            };
+            subtest 'Forward Calls: Enums and Unions (with Registry)' => sub {
+                plan 3;
+                note 'Testing marshalling for enums and unions.';
+                isa_ok my $check_color = wrap( $lib_path, 'check_color', '(int32)->int32' ), ['Affix'];
+                is $check_color->(1), 1, 'Correctly passed an enum value (GREEN)';
+                isa_ok my $process_union = wrap( $lib_path, 'process_union_float', '(@MyUnion)->float32' ), ['Affix'];
+                my $union_data = { f => 2.5 };
+                is $process_union->($union_data), float(25.0), 'Correctly passed a union with the float member active';
+            };
+            subtest 'Advanced Callbacks (Reverse FFI) (with Registry)' => sub {
+                plan 3;
+                note 'Testing callbacks that send and receive structs.';
+                isa_ok my $harness1 = wrap( $lib_path, 'process_struct_with_cb', '(*@MyStruct, (*(@MyStruct))->float64)->float64' ), ['Affix'];
+                my $struct_to_pass = { id => 100, value => 5.5, label => 'Callback Struct' };
+                my $cb1 = callback '(*@MyStruct)->float64', sub ($struct_ref) {
+                    return $struct_ref->{value} * 2;
+                };
+                is $harness1->( $struct_to_pass, $cb1 ), 11.0, 'Callback received struct pointer and returned correct value';
+                isa_ok my $harness2 = wrap( $lib_path, 'check_returned_struct_from_cb', '( ( )->@Point )->int32' ), ['Affix'];
+                my $cb2 = callback '()->@Point', sub {
+                    note "Inside callback that will return a struct";
+                    return { x => 70, y => 30 };
+                };
+                is $harness2->($cb2), 100, 'C code correctly received a struct returned by value from a Perl callback';
+            };
+        }
+    );    # end affix_with
+};
+subtest 'Forward Calls: Nested Structs and By-Value Returns' => sub {
     plan 4;
-    note 'Testing creation and use of callbacks with various signatures.';
+    note 'Testing nested structs and functions that return structs by value.';
+    my $point_sig = '{x:int32, y:int32}';
+    my $rect_sig  = "{top_left:$point_sig, bottom_right:$point_sig, name:*char}";
+    isa_ok my $get_width = wrap( $lib_path, 'get_rect_width', "(*$rect_sig)->int32" ), ['Affix'];
 
-    # Test 1: Simple callback (already in original tests)
-    my $multiplier      = 10;
-    my $perl_sub_simple = sub ($input) {
-
-        # This subtest is inside another, so plan is tricky.
-        # We just verify it works.
-        $input * $multiplier;
-    };
-    my $harness1 = wrap( $lib_path, 'call_int_cb', '(*((sint32)->sint32), sint32)->sint32' );
-    ok $harness1, 'Wrapped the simple C callback harness';
-    my $cb1     = callback( '(sint32)->sint32', $perl_sub_simple );
-    my $result1 = $harness1->( $cb1, 7 );
-    is $result1, 70, 'Simple callback was called by C code and returned the correct result';
-
-    # Test 2: Callback with multiple arguments and float return
-    my $perl_sub_math = sub ( $d, $i ) {
-
-        # Verify arguments received from C
-        is $d, float(1.5), 'Callback received correct double argument from C';
-        return $d**$i;    # 1.5 ^ 3
-    };
-    my $harness2 = affix( $lib_path, 'call_math_cb', 'f64(*((f64,s32)->f64), f64, s32)' );
-    my $cb2      = callback( '(f64,s32)->f64', $perl_sub_math );
-    my $result2  = $harness2->( $cb2, 1.5, 3 );
-    is( $result2, float(3.375), 'Callback with multiple args and float return worked correctly' );
+    my $rect_data = { top_left => { x => 10, y => 20 }, bottom_right => { x => 60, y => 80 }, name => 'My Rectangle', };
+    is $get_width->($rect_data), 50, 'Correctly passed nested struct and calculated width';
+    isa_ok my $create_point = wrap( $lib_path, 'create_point', "(int32, int32)->$point_sig" ), ['Affix'];
+    my $point = $create_point->( 123, 456 );
+    is $point, { x => 123, y => 456 }, 'Correctly received a struct returned by value';
 };
-#
-subtest 'Error Handling on Invalid Signatures' => sub {
-    plan 2;
-    note "Testing that affix() croaks with bad signatures.";
-    like dies {
-        affix( $lib_path, 'add', 'this is not a valid signature' );
-    }, qr[valid], 'affix() croaks on a completely invalid signature';
-    like dies {
-        affix( $lib_path, 'add', '(sint32, sint32)->invalid_return' );
-    }, qr[invalid], 'affix() croaks on an invalid type within a signature';
-};
-
-# In your test script, before done_testing;
-subtest 'sizeof() Introspection' => sub {
-    plan 7;
-    note 'Testing the native Affix::sizeof() function.';
-
-    # Basic primitives
-    is( sizeof('int8'),    1, "sizeof('int8') is 1" );
-    is( sizeof('int32'),   4, "sizeof('int32') is 4" );
-    is( sizeof('float64'), 8, "sizeof('float64') is 8" );
-
-    # Pointer size should match the platform's pointer size
-    is( sizeof('*void'), $Config{ptrsize}, "sizeof('*void') matches platform pointer size" );
-
-    # Struct with padding
-    # C struct { int8_t a; int32_t b; };
-    # Layout: char (1) + padding (3) + int (4) = 8 bytes
-    is( sizeof('{int8, int32}'), 8, 'sizeof() correctly calculates struct size with padding' );
-
-    # Packed struct (no padding)
-    # C struct __attribute__((packed)) { int8_t a; int32_t b; };
-    # Layout: char (1) + int (4) = 5 bytes
-    is( sizeof('!{int8, int32}'), 5, 'sizeof() correctly calculates packed struct size' );
-
-    # Array
-    # C double arr[10]; -> 10 * 8 = 80 bytes
-    is( sizeof('[10:double]'), 80, 'sizeof() correctly calculates array size' );
-};
-#
 done_testing;
-exit;
 __END__
-use v5.40;
-use blib;
-use Test2::Tools::Affix qw[:all];
-use Affix               qw[affix wrap pin unpin load_library find_symbol get_last_error_message];
-
-# Ensure output is not buffered, for clear test diagnostics.
-$|++;
-
-# This C code will be compiled into a temporary library for many of the tests.
-my $C_CODE = <<'END_C';
-#include "std.h"
-// ext: .c
-
-// For basic affix tests
-DLLEXPORT int add(int a, int b) { return a + b; }
-DLLEXPORT unsigned int u_add(unsigned int a, unsigned int b) { return a + b; }
-
-// For symbol finding tests
-DLLEXPORT int get_42() { return 42; }
-
-// A harness function for testing callbacks
-DLLEXPORT int call_int_cb(int (*cb)(int), int val) {
-    return cb(val);
-}
-END_C
-
-# Compile the library once for all subtests that need it.
-my $lib_path = compile_ok($C_CODE);
-ok( $lib_path && -e $lib_path, 'Compiled a test shared library successfully' );
-#
-subtest 'Library Loading and Lifecycle' => sub {
-    plan 5;
-    note 'Testing load_library(), Affix::Lib objects, and reference counting.';
-    my $lib1 = load_library($lib_path);
-    isa_ok( $lib1, ['Affix::Lib'], 'load_library returns an Affix::Lib object' );
-    my $lib2 = load_library($lib_path);
-    is( 0 + $lib1, 0 + $lib2, 'Loading the same library returns a handle to the same underlying object (singleton behavior)' );
-    my $bad_lib = load_library('non_existent_library_12345.so');
-    is( $bad_lib, undef, 'load_library returns undef for a non-existent library' );
-    my $err = get_last_error_message();
-    like( $err, qr/found/i, 'get_last_error_message provides a useful error on failed load' );
-
-    # The DESTROY methods for $lib1 and $lib2 will be tested implicitly by Valgrind/ASan for leaks.
-    pass('Library objects will be destroyed automatically at scope exit');
-};
-subtest 'Symbol Finding' => sub {
+subtest 'Forward Calls: Advanced Pointers and Arrays of Structs' => sub {
     plan 3;
-    note 'Testing find_symbol() returns a blessed Affix::Pin object.';
-    my $lib    = load_library($lib_path);
-    my $symbol = find_symbol( $lib, 'get_42' );
-    isa_ok( $symbol, ['Affix::Pin'], 'find_symbol returns an Affix::Pin object' );
-    my $bad_symbol = find_symbol( $lib, 'non_existent_symbol_12345' );
-    is( $bad_symbol, undef, 'find_symbol returns undef for a non-existent symbol' );
-    pass('Pin object from find_symbol will be destroyed at scope exit');
+    note 'Testing NULL pointers and marshalling arrays of structs.';
+    isa_ok my $check_null = wrap( $lib_path, 'check_null_ptr', '(*int32)->int32' ), ['Affix'];
+    is $check_null->(undef), 1, 'Passing undef to a pointer argument is correctly marshalled as NULL';
+    my $struct_sig = '{id:int32, value:float64, label:*char}';
+    isa_ok my $sum_ids = wrap( $lib_path, 'sum_struct_ids', "(*$struct_sig, int32)->int32" ), ['Affix'];
+    my $struct_array
+        = [ { id => 10, value => 1.1, label => 'A' }, { id => 20, value => 2.2, label => 'B' }, { id => 30, value => 3.3, label => 'C' }, ];
+    is $sum_ids->( $struct_array, 3 ), 60, 'Correctly passed an array of structs and summed IDs';
 };
-subtest 'Pinning and Marshalling (Dereferencing)' => sub {
-    plan 2;
-    note 'Testing pin() and the magic of ${...} for reading/writing C data.';
-    subtest 'int32' => sub {
-        plan 3;
-        my $pin_int = pin( 'int32', 123 );
-        isa_ok( $pin_int, ['Affix::Pin'], 'pin("int32", ...) returns a pin object' );
-        is( ${$pin_int}, 123, 'Dereferencing a pinned int reads the correct value' );
-        ${$pin_int} = 456;
-        is( ${$pin_int}, 456, 'Assigning to a dereferenced pin writes the correct value' );
-    };
-    subtest 'double' => sub {
-        plan 3;
-        my $pin_double = pin( 'double', 3.14 );
-        isa_ok( $pin_double, ['Affix::Pin'], 'pin("double", ...) returns a pin object' );
-        is( ${$pin_double}, float(3.14), 'Dereferencing a pinned double reads the correct value' );
-        ${$pin_double} = -6.28;
-        is( ${$pin_double}, float(-6.28), 'Assigning to a dereferenced pin writes the correct value' );
-    };
-};
-subtest 'Original Forward Call Tests' => sub {
-    plan 2;
-    subtest 'int32 add(int32, int32)' => sub {
-        plan 2;
-        ok affix( $lib_path, 'add', '(int32, int32) -> int32' ), 'affix( "add", "(int32, int32) -> int32")';
-        is add( 10, 4 ), 14, 'add( 10, 4 )';
-    };
-    subtest 'uint32 u_add(uint32, uint32)' => sub {
-        plan 2;
-        ok affix( $lib_path, 'u_add', '(uint32, uint32) -> uint32' ), 'affix( "u_add", "(uint32, uint32) -> uint32")';
-        is u_add( 10, 4 ), 14, 'u_add( 10, 4 )';
-    };
-};
-#
-subtest 'Callbacks (Reverse FFI)' => sub {
+subtest 'Forward Calls: Enums and Unions' => sub {
     plan 3;
-    note 'Testing creation and use of a callback from a Perl sub.';
-    my $multiplier = 10;
-    my $perl_sub   = sub ($input) {
-        is $input, 7, 'inside callback';
-        $input * $multiplier;
-    };
-    my $harness = wrap( $lib_path, 'call_int_cb', '(*((int)->int), int)->int' );
-    ok $harness, 'Wrapped the C harness function';
-    my $result = $harness->( Affix::callback( '(int)->int', $perl_sub ), 7 );
-    is $result, 70, 'Callback was called by C code and returned the correct result';
+    note 'Testing marshalling for enums and unions.';
+
+    # In C: typedef enum { RED, GREEN, BLUE } Color; (GREEN is 1)
+    # The signature uses int32 because enums are just ints at the ABI level.
+    isa_ok my $check_color = wrap( $lib_path, 'check_color', '(int32)->int32' ), ['Affix'];
+    is $check_color->(1), 1, 'Correctly passed an enum value (GREEN)';
+    my $union_sig = '|{i:int32, f:float32, c:[8:char]}';
+    isa_ok my $process_union = wrap( $lib_path, 'process_union_float', "($union_sig)->float32" ), ['Affix'];
+    my $union_data = { f => 2.5 };
+    is $process_union->($union_data), float(25.0), 'Correctly passed a union with the float member active';
 };
-#
+subtest 'Advanced Callbacks (Reverse FFI)' => sub {
+    plan 3;
+    note 'Testing callbacks that send and receive structs.';
+    my $struct_sig = '{id:int32, value:float64, label:*char}';
+    my $point_sig  = '{x:int32, y:int32}';
+    isa_ok my $harness1 = wrap( $lib_path, 'process_struct_with_cb', "(*$struct_sig, (*($struct_sig))->float64)->float64" ), ['Affix'];
+    my $struct_to_pass = { id => 100, value => 5.5, label => 'Callback Struct' };
+    my $cb1 = callback "(*$struct_sig)->float64", sub ($struct_ref) {
+        return $struct_ref->{value} * 2;
+    };
+    is $harness1->( $struct_to_pass, $cb1 ), 11.0, 'Callback received struct pointer and returned correct value';
+    isa_ok my $harness2 = wrap( $lib_path, 'check_returned_struct_from_cb', "( ( )->$point_sig )->int32" ), ['Affix'];
+    my $cb2 = callback "()->$point_sig", sub {
+        note "Inside callback that will return a struct";
+        return { x => 70, y => 30 };
+    };
+    is $harness2->($cb2), 100, 'C code correctly received a struct returned by value from a Perl callback';
+};
+subtest '"Kitchen Sink" Callback' => sub {
+    plan 11;    # CORRECTED PLAN
+    note 'Testing a callback with 10 mixed arguments.';
+    my $cb_sig = '(int32, float64, int32, float64, int32, float64, int32, float64, *char, *int32)->void';
+    isa_ok my $harness = wrap( $lib_path, 'call_kitchen_sink', "($cb_sig)->void" ), ['Affix'];
+    my $callback_sub = sub {
+        my ( $a, $b, $c, $d, $e, $f, $g, $h, $i, $j_ref ) = @_;
+        is $a,      1,              'Callback arg 1 (int)';
+        is $b,      2.0,            'Callback arg 2 (double)';
+        is $c,      3,              'Callback arg 3 (int)';
+        is $d,      4.0,            'Callback arg 4 (double)';
+        is $e,      5,              'Callback arg 5 (int)';
+        is $f,      6.0,            'Callback arg 6 (double)';
+        is $g,      7,              'Callback arg 7 (int)';
+        is $h,      8.0,            'Callback arg 8 (double)';
+        is $i,      'kitchen sink', 'Callback arg 9 (string)';
+        is $$j_ref, 100,            'Callback arg 10 (int*)';
+    };
+    my $cb = callback( $cb_sig, $callback_sub );
+    $harness->($cb);
+};
+subtest 'Forward Call with Many Arguments' => sub {
+    plan 2;
+    note 'Testing a C function with more arguments than available registers.';
+    my $sig = '(int64, int64, int64, int64, int64, int64, int64, int64, int64)->int64';
+    isa_ok my $summer = wrap( $lib_path, 'multi_arg_sum', $sig ), ['Affix'];
+    my $result = $summer->( 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000 );
+    is $result, 111111111, 'Correctly passed 9 arguments to a C function';
+};
+
 done_testing;
-exit;

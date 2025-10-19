@@ -31,6 +31,8 @@ typedef struct {
     /// Maps library path -> LibRegistryEntry*.
     /// This prevents reloading the same .so/.dll and manages its lifecycle.
     HV * lib_registry;
+    /// @brief Type alias for an infix type registry. Represents a collection of named types.
+    infix_registry_t * registry;
 } my_cxt_t;
 
 // Boilerplate macro from Perl to initialize the thread-local context system.
@@ -53,6 +55,7 @@ START_MY_CXT;
 
 /// @brief Type alias for an infix library handle. Represents a loaded shared library.
 typedef infix_library_t * Affix_Lib;
+typedef infix_registry_t * Affix_Registry;
 
 /// @brief Function pointer type for a "push" operation: marshalling from Perl (SV) to C (void*).
 typedef void (*Affix_Push)(pTHX_ const infix_type *, SV *, void *);
