@@ -1,7 +1,5 @@
 #pragma once
 
-// Perl Core Includes & Setup
-
 // Disables the implicit 'pTHX_' context pointer argument, which is good practice for
 // modern Perl XS code that uses the 'aTHX_' macro explicitly.
 #define PERL_NO_GET_CONTEXT 1
@@ -12,8 +10,6 @@
 #define NO_XSLOCKS
 #include <XSUB.h>
 
-// Infix Library Integration
-
 // Redirect infix's internal memory allocation to use Perl's safe allocation functions.
 // This ensures all memory is tracked by Perl's memory manager, which is safer and
 // helps with leak detection tools like valgrind.
@@ -23,7 +19,6 @@
 #include "common/infix_internals.h"
 #include <infix/infix.h>
 
-// Thread-Safe Context Definition
 // This structure defines the thread-local storage for our module. Under ithreads,
 // each Perl thread will get its own private instance of this struct.
 typedef struct {
@@ -35,7 +30,6 @@ typedef struct {
     infix_registry_t * registry;
 } my_cxt_t;
 
-// Boilerplate macro from Perl to initialize the thread-local context system.
 START_MY_CXT;
 
 // Helper macro to fetch a value from a hash if it exists, otherwise return a default.
@@ -51,12 +45,6 @@ START_MY_CXT;
 #define dTHXfield(var)
 #endif
 
-// Core Type Definitions
-
-/// @brief Type alias for an infix library handle. Represents a loaded shared library.
-typedef infix_library_t * Affix_Lib;
-typedef infix_registry_t * Affix_Registry;
-
 /// @brief Function pointer type for a "push" operation: marshalling from Perl (SV) to C (void*).
 typedef void (*Affix_Push)(pTHX_ const infix_type *, SV *, void *);
 /// @brief Function pointer type for a "pull" operation: marshalling from C (void*) to Perl (SV).
@@ -65,12 +53,12 @@ typedef SV * (*Affix_Pull)(pTHX_ const infix_type *, void *);
 /// @brief Represents a forward FFI call (a Perl sub that calls a C function).
 /// This struct is the "context" attached to the generated XS subroutine.
 typedef struct {
-    infix_forward_t * infix;     ///< Handle to the infix trampoline and type info.
-    infix_arena_t * args_arena;  ///< Fast memory allocator for arguments and return value during a call.
-    infix_cif_func cif;          ///< A direct function pointer to the JIT-compiled trampoline code.
-    Affix_Push * push;           ///< An array of marshalling functions for the arguments (Perl -> C).
-    Affix_Pull pull;             ///< A marshalling function for the return value (C -> Perl).
-    Affix_Lib lib_handle;        ///< If affix() loaded a library itself, stores the handle for cleanup.
+    infix_forward_t * infix;       ///< Handle to the infix trampoline and type info.
+    infix_arena_t * args_arena;    ///< Fast memory allocator for arguments and return value during a call.
+    infix_cif_func cif;            ///< A direct function pointer to the JIT-compiled trampoline code.
+    Affix_Push * push;             ///< An array of marshalling functions for the arguments (Perl -> C).
+    Affix_Pull pull;               ///< A marshalling function for the return value (C -> Perl).
+    infix_library_t * lib_handle;  ///< If affix() loaded a library itself, stores the handle for cleanup.
 } Affix;
 
 /// @brief Represents an Affix::Pin object, a blessed Perl scalar that wraps a raw C pointer.
@@ -96,8 +84,8 @@ typedef struct {
 
 /// @brief An entry in the thread-local library registry hash.
 typedef struct {
-    Affix_Lib lib;  ///< The handle to the opened library.
-    UV ref_count;   ///< Reference count. The library is closed only when this reaches 0.
+    infix_library_t * lib;  ///< The handle to the opened library.
+    UV ref_count;           ///< Reference count. The library is closed only when this reaches 0.
 } LibRegistryEntry;
 
 // Function Prototypes for XS and Internal Logic
@@ -123,8 +111,6 @@ Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv);
 // The C entry point for all reverse-FFI callbacks.
 void _affix_callback_handler_entry(infix_context_t *, void *, void **);
 
-// Helper Macros
-
 // A portable way to create a new XS subroutine with a C prototype.
 #ifdef newXS_flags
 #define newXSproto_portable(name, c_impl, file, proto) newXS_flags(name, c_impl, file, proto, 0)
@@ -139,7 +125,6 @@ void _affix_callback_handler_entry(infix_context_t *, void *, void **);
     _export_function(aTHX_ get_hv(form("%s::EXPORT_TAGS", package), GV_ADD), what, tag)
 void _export_function(pTHX_ HV *, const char *, const char *);
 
-// XS Bootstrap Function
 // The main entry point for the entire XS module, called by Perl on `use Affix`.
 void boot_Affix(pTHX_ CV *);
 

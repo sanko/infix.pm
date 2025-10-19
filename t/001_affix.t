@@ -40,6 +40,10 @@ DLLEXPORT bool     echo_bool   (bool     v) { return v; }
 
 /* Pointers and References */
 DLLEXPORT const char* get_hello_string() { return "Hello from C"; }
+DLLEXPORT bool set_hello_string(const char * hi) { return strcmp(hi, "Hello from Perl")==0; }
+
+
+
 
 // Dereferences a pointer and returns its value + 10.
 DLLEXPORT int deref_and_add(int* p) {
@@ -248,15 +252,23 @@ subtest 'Forward Calls: Comprehensive Primitives' => sub {
     }
 };
 subtest 'Forward Calls: Pointers and References' => sub {
-    plan 5;
-    note 'Testing pointer marshalling, including pass-by-reference.';
-    isa_ok my $get_string = wrap( $lib_path, 'get_hello_string', '()->*char' ), ['Affix'];
-    is $get_string->(), 'Hello from C', 'Correctly returned a C string';
-    isa_ok my $deref  = wrap( $lib_path, 'deref_and_add',  '(*int32)->int32' ),       ['Affix'];
-    isa_ok my $modify = wrap( $lib_path, 'modify_int_ptr', '(*int32, int32)->void' ), ['Affix'];
-    $modify->( my $int_pin, 999 );
-    is $int_pin, 1000, 'C function correctly modified the value in our pin (pass-by-reference)';
+    plan 2;
+    subtest string => sub {
+        isa_ok my $get_string = wrap( $lib_path, 'get_hello_string', '()->*char' ), ['Affix'];
+        is $get_string->(), 'Hello from C', 'Correctly returned a C string';
+        #
+        isa_ok my $set_string = wrap( $lib_path, 'set_hello_string', '(*char)->bool' ), ['Affix'];
+        ok $set_string->('Hello from Perl'), 'Correctly passed a string to C';
+    };
+    subtest '*int32' => sub {
+        isa_ok my $deref  = wrap( $lib_path, 'deref_and_add',  '(*int32)->int32' ),       ['Affix'];
+        isa_ok my $modify = wrap( $lib_path, 'modify_int_ptr', '(*int32, int32)->void' ), ['Affix'];
+        $modify->( my $int_pin, 999 );
+        is $int_pin, 1000, 'C function correctly modified the value in our pin (pass-by-reference)';
+    }
 };
+done_testing;
+__END__
 subtest 'Forward Calls: Structs and Arrays' => sub {
     plan 5;
     note 'Testing passing pointers to complex data structures.';
@@ -268,18 +280,18 @@ subtest 'Forward Calls: Structs and Arrays' => sub {
     is $sum_array->( [ 100, 200, 300, 400 ], 4 ), 1000, 'AV* passed as array pointer';
 };
 
+
+
 # ==============================================================================
 # NEW "KITCHEN SINK" TESTS
 # ==============================================================================
 subtest 'Type registry' => sub {
     my $reg = Affix::Registry->new;
     isa_ok $reg, ['Affix::Registry'], 'Affix::Registry->new creates a registry object';
-    $reg->define(<<'END_TYPES');
-    @Point    = { x: int32, y: int32 };
-    @Rect     = { top_left: @Point, bottom_right: @Point, name: *char };
-    @MyStruct = { id: int32, value: float64, label: *char };
-    @MyUnion  = { i: int32, f: float32, c: [8:char] };
-END_TYPES
+    $reg->define('@Point    = { x: int32, y: int32 };');
+    $reg->define('@Rect     = { top_left: @Point, bottom_right: @Point, name: *char };');
+    $reg->define('@MyStruct = { id: int32, value: float64, label: *char };');
+    $reg->define('@MyUnion  = { i: int32, f: float32, c: [8:char] };');
     affix_with(
         $reg,
         sub {
@@ -334,6 +346,8 @@ END_TYPES
         }
     );    # end affix_with
 };
+done_testing;
+__END__
 subtest 'Forward Calls: Nested Structs and By-Value Returns' => sub {
     plan 4;
     note 'Testing nested structs and functions that return structs by value.';
@@ -347,8 +361,7 @@ subtest 'Forward Calls: Nested Structs and By-Value Returns' => sub {
     my $point = $create_point->( 123, 456 );
     is $point, { x => 123, y => 456 }, 'Correctly received a struct returned by value';
 };
-done_testing;
-__END__
+
 subtest 'Forward Calls: Advanced Pointers and Arrays of Structs' => sub {
     plan 3;
     note 'Testing NULL pointers and marshalling arrays of structs.';
