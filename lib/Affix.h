@@ -76,11 +76,12 @@ typedef struct {
     dTHXfield(perl)  ///< The thread context in which the callback was created.
 } Affix_Callback_Data;
 
-/// @brief Represents an Affix::Callback object (a C function pointer that calls a Perl sub).
+/// @brief Internal struct holding the C resources that are magically attached
+///        to a user's coderef (CV*) when it is first used as a callback.
 typedef struct {
     infix_reverse_t * reverse_ctx;        ///< Handle to the infix reverse-call trampoline.
     Affix_Callback_Data * callback_data;  ///< Holds the SV* to the Perl coderef to keep it alive.
-} Affix_Callback;
+} Implicit_Callback_Magic;
 
 /// @brief An entry in the thread-local library registry hash.
 typedef struct {
@@ -88,7 +89,14 @@ typedef struct {
     UV ref_count;           ///< Reference count. The library is closed only when this reaches 0.
 } LibRegistryEntry;
 
-// Function Prototypes for XS and Internal Logic
+SV * pull_struct(pTHX_ const infix_type * type, void * p);
+SV * pull_union(pTHX_ const infix_type * type, void * p);
+SV * pull_array(pTHX_ const infix_type * type, void * p);
+void push_reverse_trampoline(pTHX_ const infix_type * type, SV * sv, void * p);
+SV * pull_reverse_trampoline(pTHX_ const infix_type * type, void * p);
+SV * pull_enum(pTHX_ const infix_type * type, void * p);
+SV * pull_complex(pTHX_ const infix_type * type, void * p);
+SV * pull_vector(pTHX_ const infix_type * type, void * p);
 
 // The C function that gets executed when an affixed Perl sub is called.
 extern void Affix_trigger(pTHX_ CV *);
@@ -105,6 +113,9 @@ void _pin_sv(pTHX_ SV * sv, const infix_type * type, void * pointer, bool manage
 int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg);
 int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg);
 int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg);
+
+// The C function that gets called when a magically-promoted CV* is destroyed.
+int Affix_free_implicit_callback(pTHX_ SV * sv, MAGIC * mg);
 
 // Internal helper to safely get the Affix_Pin struct from a blessed SV.
 Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv);

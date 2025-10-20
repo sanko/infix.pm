@@ -15,6 +15,7 @@ my $C_CODE = <<'END_C';
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h> // For strcmp
+#include <stdlib.h> // For malloc
 
 /* Expose global vars */
 DLLEXPORT int global_counter = 42;
@@ -54,9 +55,12 @@ DLLEXPORT void modify_int_ptr(int* p, int new_val) {
 }
 
 // Takes a pointer to a pointer and verifies the string.
-DLLEXPORT int check_string_ptr(char** s) {
-    if (s && *s && strcmp(*s, "perl") == 0)
+DLLEXPORT int check_string_ptr_ptr(char** s) {
+    if (s && *s && strcmp(*s, "perl") == 0) {
+        // Modify the inner pointer to prove we can
+        *s = "C changed me";
         return 1; // success
+    }
     return 0; // failure
 }
 
@@ -89,6 +93,12 @@ DLLEXPORT int64_t sum_s64_array(int64_t* arr, int len) {
     return total;
 }
 
+// Returns a pointer to a static internal struct
+MyStruct g_struct = { 99, -1.0, "Global" };
+DLLEXPORT MyStruct* get_static_struct_ptr() {
+    return &g_struct;
+}
+
 /* Nested Structs */
 typedef struct {
     int x;
@@ -113,8 +123,13 @@ DLLEXPORT Point create_point(int x, int y) {
 }
 
 /* Advanced Pointers */
-DLLEXPORT int check_null_ptr(int* p) {
-    return (p == NULL); // Return 1 if null, 0 otherwise
+DLLEXPORT bool check_is_null(void* p) {
+    return (p == NULL);
+}
+// Takes a void* and casts it to an int*
+DLLEXPORT int read_int_from_void_ptr(void* p) {
+    if (!p) return -999;
+    return *(int*)p;
 }
 
 /* Arrays of Structs */
@@ -210,7 +225,7 @@ subtest 'Symbol Finding' => sub {
 subtest 'Pinning and Marshalling (Dereferencing)' => sub {
     plan 1;
     subtest 'sint32' => sub {
-        plan 9;    # CORRECTED PLAN
+        plan 9;
         my $pin_int;
         isa_ok affix( $lib_path, 'get_global_counter', '()->int32' );
         isa_ok affix( $lib_path, 'set_global_counter', '(int32)->void' );
@@ -245,165 +260,120 @@ subtest 'Forward Calls: Comprehensive Primitives' => sub {
         is( $fn->($value), $value == int $value ? $value : float( $value, tolerance => 0.01 ), "Correctly passed and returned type '$type'" );
     }
 };
-subtest 'Forward Calls: Pointers and References' => sub {
-    plan 2;
-    subtest string => sub {
+subtest 'Forward Calls: Comprehensive Pointer Types' => sub {
+    plan 7;
+    isa_ok my $check_is_null = wrap( $lib_path, 'check_is_null', '(*void)->bool' ), ['Affix'];
+    ok $check_is_null->(undef), 'Passing undef to a *void argument is received as NULL';
+    subtest 'char*' => sub {
+        plan 4;
         isa_ok my $get_string = wrap( $lib_path, 'get_hello_string', '()->*char' ), ['Affix'];
         is $get_string->(), 'Hello from C', 'Correctly returned a C string';
-        #
         isa_ok my $set_string = wrap( $lib_path, 'set_hello_string', '(*char)->bool' ), ['Affix'];
         ok $set_string->('Hello from Perl'), 'Correctly passed a string to C';
     };
-    subtest '*int32' => sub {
+    subtest 'int32*' => sub {
+        plan 4;
         isa_ok my $deref  = wrap( $lib_path, 'deref_and_add',  '(*int32)->int32' ),       ['Affix'];
         isa_ok my $modify = wrap( $lib_path, 'modify_int_ptr', '(*int32, int32)->void' ), ['Affix'];
-        $modify->( my $int_pin, 999 );
-        is $int_pin, 1000, 'C function correctly modified the value in our pin (pass-by-reference)';
-    }
+        my $int_var = 50;
+        is $deref->( \$int_var ), 60, 'Passing a scalar ref as an "in" pointer works';
+        $modify->( \$int_var, 999 );
+        is $int_var, 1000, 'C function correctly modified the value in our scalar ref ("out" param)';
+    };
+    subtest 'void*' => sub {
+        plan 2;
+        isa_ok my $read_void = wrap( $lib_path, 'read_int_from_void_ptr', '(*void)->int32' ), ['Affix'];
+        my $int_val = 12345;
+        is $read_void->( \$int_val ), 12345, 'Correctly passed a scalar ref as a void* and read its value';
+    };
+    subtest 'char**' => sub {
+        plan 3;
+        isa_ok my $check_ptr_ptr = wrap( $lib_path, 'check_string_ptr_ptr', '(**char)->int32' ), ['Affix'];
+        my $string = 'perl';
+        ok $check_ptr_ptr->( \$string ), 'Correctly passed a reference to a string as char**';
+        is $string, 'C changed me', 'C function was able to modify the inner pointer';
+    };
+    subtest 'Struct Pointers (*MyStruct)' => sub {
+        plan 4;
+        typedef('@MyStruct = { id: int32, value: float64, label: *char };');
+        isa_ok my $init_struct = wrap( $lib_path, 'init_struct', '(*@MyStruct, int32, float64, *char)->void' ), ['Affix'];
+        my %struct_hash;
+        $init_struct->( \%struct_hash, 101, 9.9, "Initialized" );
+        is \%struct_hash, { id => 101, value => 9.9, label => "Initialized" }, 'Correctly initialized a Perl hash via a struct pointer';
+        isa_ok my $get_ptr = wrap( $lib_path, 'get_static_struct_ptr', '()->*@MyStruct' ), ['Affix'];
+        my $struct_ptr = $get_ptr->();
+        isa_ok $struct_ptr, ['Affix::Pointer'], 'Receiving a struct pointer returns an Affix::Pointer object';
+        is $struct_ptr->deref, { id => 99, value => -1.0, label => 'Global' }, 'Dereferencing a returned struct pointer works';
+    };
+    subtest 'Function Pointers (*(int->int))' => sub {
+        plan 3;
+        isa_ok my $harness = wrap( $lib_path, 'call_int_cb', '(*((int32)->int32), int32)->int32' ), ['Affix'];
+        my $result = $harness->( sub { $_[0] * 10 }, 7 );
+        is $result, 70, 'Correctly passed a simple coderef as a function pointer';
+        ok $check_is_null->(undef), 'Passing undef as a function pointer is received as NULL';
+    };
 };
-subtest 'Forward Calls: Structs and Arrays' => sub {
+subtest 'Type Registry and Typedefs' => sub {
     plan 5;
-    note 'Testing passing pointers to complex data structures.';
-    isa_ok my $init   = wrap( $lib_path, 'init_struct',   '(*{id:int32, value:float64, label:*char}, int32, double, *char)->void' ), ['Affix'];
-    isa_ok my $get_id = wrap( $lib_path, 'get_struct_id', '(*{id:int32, value:float64, label:*char})->int32' ),                      ['Affix'];
-    $init->( my $struct_pin, 42, 3.14, 'Test Label' );
-    is $get_id->($struct_pin), 42, 'Struct pointer passed and member retrieved correctly';
-    isa_ok my $sum_array = wrap( $lib_path, 'sum_s64_array', '(*int64, int32)->int64' ), ['Affix'];
-    is $sum_array->( [ 100, 200, 300, 400 ], 4 ), 1000, 'AV* passed as array pointer';
-};
-subtest typedef => sub {
-    my $reg = Affix::Registry->new;
-    isa_ok $reg, ['Affix::Registry'], 'Affix::Registry->new creates a registry object';
-    #
-    $reg->define('@Point    = { x: int32, y: int32 };');
-
-    #~ $reg->define('@Rect     = { top_left: @Point, bottom_right: @Point, name: *char };');
-};
-done_testing;
-__END__
-subtest 'Type registry' => sub {
-
-    $reg->define('@Point    = { x: int32, y: int32 };');
-    $reg->define('@Rect     = { top_left: @Point, bottom_right: @Point, name: *char };');
-    $reg->define('@MyStruct = { id: int32, value: float64, label: *char };');
-    $reg->define('@MyUnion  = { i: int32, f: float32, c: [8:char] };');
-    affix_with(
-        $reg,
-        sub {
-            subtest 'Forward Calls: Nested Structs and By-Value Returns (with Registry)' => sub {
-                plan 3;
-                note 'Testing nested structs and functions that return structs by value.';
-                isa_ok my $get_width = wrap( $lib_path, 'get_rect_width', '(*@Rect)->int32' ), ['Affix'];
-                my $rect_data = { top_left => { x => 10, y => 20 }, bottom_right => { x => 60, y => 80 }, name => 'My Rectangle', };
-                is $get_width->($rect_data), 50, 'Correctly passed nested struct and calculated width';
-                isa_ok my $create_point = wrap( $lib_path, 'create_point', '(int32, int32)->@Point' ), ['Affix'];
-                my $point = $create_point->( 123, 456 );
-                is $point, { x => 123, y => 456 }, 'Correctly received a struct returned by value';
-            };
-            subtest 'Forward Calls: Advanced Pointers and Arrays of Structs (with Registry)' => sub {
-                plan 3;
-                note 'Testing NULL pointers and marshalling arrays of structs.';
-                isa_ok my $check_null = wrap( $lib_path, 'check_null_ptr', '(*int32)->int32' ), ['Affix'];
-                is $check_null->(undef), 1, 'Passing undef to a pointer argument is correctly marshalled as NULL';
-                isa_ok my $sum_ids = wrap( $lib_path, 'sum_struct_ids', '(*@MyStruct, int32)->int32' ), ['Affix'];
-                my $struct_array = [
-                    { id => 10, value => 1.1, label => 'A' },
-                    { id => 20, value => 2.2, label => 'B' },
-                    { id => 30, value => 3.3, label => 'C' },
-                ];
-                is $sum_ids->( $struct_array, 3 ), 60, 'Correctly passed an array of structs and summed IDs';
-            };
-            subtest 'Forward Calls: Enums and Unions (with Registry)' => sub {
-                plan 3;
-                note 'Testing marshalling for enums and unions.';
-                isa_ok my $check_color = wrap( $lib_path, 'check_color', '(int32)->int32' ), ['Affix'];
-                is $check_color->(1), 1, 'Correctly passed an enum value (GREEN)';
-                isa_ok my $process_union = wrap( $lib_path, 'process_union_float', '(@MyUnion)->float32' ), ['Affix'];
-                my $union_data = { f => 2.5 };
-                is $process_union->($union_data), float(25.0), 'Correctly passed a union with the float member active';
-            };
-            subtest 'Advanced Callbacks (Reverse FFI) (with Registry)' => sub {
-                plan 3;
-                note 'Testing callbacks that send and receive structs.';
-                isa_ok my $harness1 = wrap( $lib_path, 'process_struct_with_cb', '(*@MyStruct, (*(@MyStruct))->float64)->float64' ), ['Affix'];
-                my $struct_to_pass = { id => 100, value => 5.5, label => 'Callback Struct' };
-                my $cb1 = callback '(*@MyStruct)->float64', sub ($struct_ref) {
-                    return $struct_ref->{value} * 2;
-                };
-                is $harness1->( $struct_to_pass, $cb1 ), 11.0, 'Callback received struct pointer and returned correct value';
-                isa_ok my $harness2 = wrap( $lib_path, 'check_returned_struct_from_cb', '( ( )->@Point )->int32' ), ['Affix'];
-                my $cb2 = callback '()->@Point', sub {
-                    note "Inside callback that will return a struct";
-                    return { x => 70, y => 30 };
-                };
-                is $harness2->($cb2), 100, 'C code correctly received a struct returned by value from a Perl callback';
-            };
-        }
-    );    # end affix_with
-};
-done_testing;
-__END__
-subtest 'Forward Calls: Nested Structs and By-Value Returns' => sub {
-    plan 4;
-    note 'Testing nested structs and functions that return structs by value.';
-    my $point_sig = '{x:int32, y:int32}';
-    my $rect_sig  = "{top_left:$point_sig, bottom_right:$point_sig, name:*char}";
-    isa_ok my $get_width = wrap( $lib_path, 'get_rect_width', "(*$rect_sig)->int32" ), ['Affix'];
-
-    my $rect_data = { top_left => { x => 10, y => 20 }, bottom_right => { x => 60, y => 80 }, name => 'My Rectangle', };
-    is $get_width->($rect_data), 50, 'Correctly passed nested struct and calculated width';
-    isa_ok my $create_point = wrap( $lib_path, 'create_point', "(int32, int32)->$point_sig" ), ['Affix'];
-    my $point = $create_point->( 123, 456 );
-    is $point, { x => 123, y => 456 }, 'Correctly received a struct returned by value';
-};
-
-subtest 'Forward Calls: Advanced Pointers and Arrays of Structs' => sub {
-    plan 3;
-    note 'Testing NULL pointers and marshalling arrays of structs.';
-    isa_ok my $check_null = wrap( $lib_path, 'check_null_ptr', '(*int32)->int32' ), ['Affix'];
-    is $check_null->(undef), 1, 'Passing undef to a pointer argument is correctly marshalled as NULL';
-    my $struct_sig = '{id:int32, value:float64, label:*char}';
-    isa_ok my $sum_ids = wrap( $lib_path, 'sum_struct_ids', "(*$struct_sig, int32)->int32" ), ['Affix'];
-    my $struct_array
-        = [ { id => 10, value => 1.1, label => 'A' }, { id => 20, value => 2.2, label => 'B' }, { id => 30, value => 3.3, label => 'C' }, ];
-    is $sum_ids->( $struct_array, 3 ), 60, 'Correctly passed an array of structs and summed IDs';
-};
-subtest 'Forward Calls: Enums and Unions' => sub {
-    plan 3;
-    note 'Testing marshalling for enums and unions.';
-
-    # In C: typedef enum { RED, GREEN, BLUE } Color; (GREEN is 1)
-    # The signature uses int32 because enums are just ints at the ABI level.
-    isa_ok my $check_color = wrap( $lib_path, 'check_color', '(int32)->int32' ), ['Affix'];
-    is $check_color->(1), 1, 'Correctly passed an enum value (GREEN)';
-    my $union_sig = '|{i:int32, f:float32, c:[8:char]}';
-    isa_ok my $process_union = wrap( $lib_path, 'process_union_float', "($union_sig)->float32" ), ['Affix'];
-    my $union_data = { f => 2.5 };
-    is $process_union->($union_data), float(25.0), 'Correctly passed a union with the float member active';
-};
-subtest 'Advanced Callbacks (Reverse FFI)' => sub {
-    plan 3;
-    note 'Testing callbacks that send and receive structs.';
-    my $struct_sig = '{id:int32, value:float64, label:*char}';
-    my $point_sig  = '{x:int32, y:int32}';
-    isa_ok my $harness1 = wrap( $lib_path, 'process_struct_with_cb', "(*$struct_sig, (*($struct_sig))->float64)->float64" ), ['Affix'];
-    my $struct_to_pass = { id => 100, value => 5.5, label => 'Callback Struct' };
-    my $cb1 = callback "(*$struct_sig)->float64", sub ($struct_ref) {
-        return $struct_ref->{value} * 2;
+    note 'Defining named types for subsequent tests.';
+    ok typedef(
+        '@Point    = { x: int32, y: int32 };' .
+            '@Rect     = { top_left: @Point, bottom_right: @Point, name: *char };' .
+            '@MyStruct = { id: int32, value: float64, label: *char };' .
+            '@MyUnion  = { i:int32, f:float32, c:[8:char] };'    # FIX: Use {} for union in typedef
+        ),
+        'Successfully defined multiple types using typedef';
+    subtest 'Forward Calls: Nested Structs and By-Value Returns (with Typedefs)' => sub {
+        plan 3;
+        note 'Testing nested structs and functions that return structs by value.';
+        isa_ok my $get_width = wrap( $lib_path, 'get_rect_width', '(*@Rect)->int32' ), ['Affix'];
+        my $rect_data = { top_left => { x => 10, y => 20 }, bottom_right => { x => 60, y => 80 }, name => 'My Rectangle', };
+        is $get_width->($rect_data), 50, 'Correctly passed nested struct and calculated width';
+        isa_ok my $create_point = wrap( $lib_path, 'create_point', '(int32, int32)->@Point' ), ['Affix'];
+        my $point = $create_point->( 123, 456 );
+        is $point, { x => 123, y => 456 }, 'Correctly received a struct returned by value';
     };
-    is $harness1->( $struct_to_pass, $cb1 ), 11.0, 'Callback received struct pointer and returned correct value';
-    isa_ok my $harness2 = wrap( $lib_path, 'check_returned_struct_from_cb', "( ( )->$point_sig )->int32" ), ['Affix'];
-    my $cb2 = callback "()->$point_sig", sub {
-        note "Inside callback that will return a struct";
-        return { x => 70, y => 30 };
+    subtest 'Forward Calls: Advanced Pointers and Arrays of Structs (with Typedefs)' => sub {
+        plan 2;
+        note 'Testing marshalling arrays of structs using typedefs.';
+        isa_ok my $sum_ids = wrap( $lib_path, 'sum_struct_ids', '(*@MyStruct, int32)->int32' ), ['Affix'];
+        my $struct_array
+            = [ { id => 10, value => 1.1, label => 'A' }, { id => 20, value => 2.2, label => 'B' }, { id => 30, value => 3.3, label => 'C' }, ];
+        is $sum_ids->( $struct_array, 3 ), 60, 'Correctly passed an array of structs and summed IDs';
     };
-    is $harness2->($cb2), 100, 'C code correctly received a struct returned by value from a Perl callback';
+    subtest 'Forward Calls: Enums and Unions (with Typedefs)' => sub {
+        plan 3;
+        note 'Testing marshalling for enums and unions.';
+        isa_ok my $check_color = wrap( $lib_path, 'check_color', '(int32)->int32' ), ['Affix'];
+        is $check_color->(1), 1, 'Correctly passed an enum value (GREEN)';
+        isa_ok my $process_union = wrap( $lib_path, 'process_union_float', '(@MyUnion)->float32' ), ['Affix'];
+        my $union_data = { f => 2.5 };
+        is $process_union->($union_data), float(25.0), 'Correctly passed a union with the float member active';
+    };
+    subtest 'Advanced Callbacks (Reverse FFI) (with Typedefs)' => sub {
+        plan 3;
+        note 'Testing callbacks that send and receive structs by passing coderefs directly.';
+        isa_ok my $harness1 = wrap( $lib_path, 'process_struct_with_cb', '(*@MyStruct, (*(@MyStruct))->float64)->float64' ), ['Affix'];
+        my $struct_to_pass = { id => 100, value => 5.5, label => 'Callback Struct' };
+        my $cb1            = sub ($struct_ref) {
+            return $struct_ref->{value} * 2;
+        };
+        is $harness1->( $struct_to_pass, $cb1 ), 11.0, 'Callback coderef received struct pointer and returned correct value';
+        isa_ok my $harness2 = wrap( $lib_path, 'check_returned_struct_from_cb', '( (*())->@Point )->int32' ), ['Affix'];
+        is $harness2->(
+            sub {
+                note "Inside callback that will return a struct";
+                return { x => 70, y => 30 };
+            }
+            ),
+            100, 'C code correctly received a struct returned by value from a Perl callback';
+    };
 };
 subtest '"Kitchen Sink" Callback' => sub {
-    plan 11;    # CORRECTED PLAN
-    note 'Testing a callback with 10 mixed arguments.';
-    my $cb_sig = '(int32, float64, int32, float64, int32, float64, int32, float64, *char, *int32)->void';
-    isa_ok my $harness = wrap( $lib_path, 'call_kitchen_sink', "($cb_sig)->void" ), ['Affix'];
+    plan 11;
+    note 'Testing a callback with 10 mixed arguments passed as a direct coderef.';
+    my $cb_sig = '(*((int32, float64, int32, float64, int32, float64, int32, float64, *char, *int32)->void))->void';
+    isa_ok my $harness = wrap( $lib_path, 'call_kitchen_sink', $cb_sig ), ['Affix'];
     my $callback_sub = sub {
         my ( $a, $b, $c, $d, $e, $f, $g, $h, $i, $j_ref ) = @_;
         is $a,      1,              'Callback arg 1 (int)';
@@ -417,8 +387,7 @@ subtest '"Kitchen Sink" Callback' => sub {
         is $i,      'kitchen sink', 'Callback arg 9 (string)';
         is $$j_ref, 100,            'Callback arg 10 (int*)';
     };
-    my $cb = callback( $cb_sig, $callback_sub );
-    $harness->($cb);
+    $harness->($callback_sub);
 };
 subtest 'Forward Call with Many Arguments' => sub {
     plan 2;
@@ -428,5 +397,4 @@ subtest 'Forward Call with Many Arguments' => sub {
     my $result = $summer->( 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000 );
     is $result, 111111111, 'Correctly passed 9 arguments to a C function';
 };
-
 done_testing;

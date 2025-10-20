@@ -5,10 +5,44 @@
 SV * pull_struct(pTHX_ const infix_type * type, void * p);
 SV * pull_union(pTHX_ const infix_type * type, void * p);
 SV * pull_array(pTHX_ const infix_type * type, void * p);
+void push_reverse_trampoline(pTHX_ const infix_type * type, SV * sv, void * p);
 SV * pull_reverse_trampoline(pTHX_ const infix_type * type, void * p);
 SV * pull_enum(pTHX_ const infix_type * type, void * p);
 SV * pull_complex(pTHX_ const infix_type * type, void * p);
 SV * pull_vector(pTHX_ const infix_type * type, void * p);
+
+// Helper function to create rich, compiler-style error messages for the parser.
+static SV * _format_parse_error(pTHX_ const char * context_msg, const char * signature, infix_error_details_t err) {
+    STRLEN sig_len = strlen(signature);
+    int radius = 20;
+
+    // Calculate the start and end of the snippet to display
+    size_t start = (err.position > radius) ? (err.position - radius) : 0;
+    size_t end = (err.position + radius < sig_len) ? (err.position + radius) : sig_len;
+
+    // Add "..." indicators if the snippet is truncated
+    const char * start_indicator = (start > 0) ? "... " : "";
+    const char * end_indicator = (end < sig_len) ? " ..." : "";
+    int start_indicator_len = (start > 0) ? 4 : 0;
+
+    // Create the snippet string
+    char snippet[128];
+    snprintf(
+        snippet, sizeof(snippet), "%s%.*s%s", start_indicator, (int)(end - start), signature + start, end_indicator);
+
+    // Create the pointer line with the caret
+    char pointer[128];
+    int caret_pos = err.position - start + start_indicator_len;
+    snprintf(pointer, sizeof(pointer), "%*s^", caret_pos, "");
+
+    // Combine everything into a final error message
+    return sv_2mortal(newSVpvf("Failed to parse signature %s:\n\n  %s\n  %s\n\nError: %s (at position %zu)",
+                               context_msg,
+                               snippet,
+                               pointer,
+                               err.message,
+                               err.position));
+}
 
 // Library Lifecycle Management (Thread-Safe with MY_CXT)
 XS_INTERNAL(Affix_Lib_as_string) {
@@ -117,12 +151,14 @@ Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv) {
     if (!sv)
         return nullptr;
 
-    MAGIC * mg = mg_findext(sv, PERL_MAGIC_ext, &Affix_pin_vtbl);
-    if (mg)
-        return (Affix_Pin *)mg->mg_ptr;
+    if (SvMAGICAL(sv)) {
+        MAGIC * mg = mg_findext(sv, PERL_MAGIC_ext, &Affix_pin_vtbl);
+        if (mg)
+            return (Affix_Pin *)mg->mg_ptr;
+    }
 
     if (SvROK(sv) && sv_isobject(sv) && sv_derived_from(sv, "Affix::Pin")) {
-        mg = mg_find(SvRV(sv), PERL_MAGIC_ext);
+        MAGIC * mg = mg_find(SvRV(sv), PERL_MAGIC_ext);
         if (mg && mg->mg_virtual == &Affix_pin_vtbl)
             return (Affix_Pin *)mg->mg_ptr;
     }
@@ -163,15 +199,15 @@ int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg) {
 }
 
 bool is_pin(pTHX_ SV * sv) {
-    //~ PING;
-    //~ sv_dump(sv);
-    if (SvOK(sv) && SvTYPE(sv) < SVt_PVAV && mg_findext(sv, PERL_MAGIC_ext, &Affix_pin_vtbl))
-        return true;
-    //~ PING;
-    return false;
+    if (!sv || !SvOK(sv) || SvROK(sv) || !SvMAGICAL(sv)) {
+        return false;
+    }
+    return mg_findext(sv, PERL_MAGIC_ext, &Affix_pin_vtbl) != nullptr;
 }
 
 void _pin_sv(pTHX_ SV * sv, const infix_type * type, void * pointer, bool managed) {
+    if (SvREADONLY(sv))
+        return;
     SvUPGRADE(sv, SVt_PVMG);
 
     MAGIC * mg = mg_findext(sv, PERL_MAGIC_ext, &Affix_pin_vtbl);
@@ -231,6 +267,7 @@ XS_INTERNAL(Affix_find_symbol) {
 
 XS_INTERNAL(Affix_pin) {
     dXSARGS;
+    dMY_CXT;
     if (items != 4)
         croak_xs_usage(cv, "var, lib, symbol, type");
 
@@ -253,8 +290,10 @@ XS_INTERNAL(Affix_pin) {
 
     infix_type * type = nullptr;
     infix_arena_t * arena = nullptr;
-    if (infix_type_from_signature(&type, &arena, signature, nullptr) != INFIX_SUCCESS)
-        croak("Invalid type signature for pin: %s", signature);
+    if (infix_type_from_signature(&type, &arena, signature, MY_CXT.registry) != INFIX_SUCCESS) {
+        infix_error_details_t err = infix_get_last_error();
+        croak_sv(_format_parse_error(aTHX_ "for pin", signature, err));
+    }
 
     Affix_Pin * pin;
     Newxz(pin, 1, Affix_Pin);
@@ -280,21 +319,19 @@ XS_INTERNAL(Affix_unpin) {
 
 XS_INTERNAL(Affix_sizeof) {
     dXSARGS;
+    dMY_CXT;
     if (items != 1)
         croak_xs_usage(cv, "type_signature");
     const char * signature = SvPV_nolen(ST(0));
     infix_type * type = nullptr;
     infix_arena_t * arena = nullptr;
-    infix_status status = infix_type_from_signature(&type, &arena, signature, nullptr);
+    infix_status status = infix_type_from_signature(&type, &arena, signature, MY_CXT.registry);
 
     if (status != INFIX_SUCCESS) {
         infix_error_details_t err = infix_get_last_error();
         if (arena)
             infix_arena_destroy(arena);
-        croak("Invalid type signature for sizeof: '%s' (error at position %zu: %s)",
-              signature,
-              err.position,
-              err.message);
+        croak_sv(_format_parse_error(aTHX_ "for sizeof", signature, err));
     }
     size_t type_size = infix_type_get_size(type);
     infix_arena_destroy(arena);
@@ -304,69 +341,62 @@ XS_INTERNAL(Affix_sizeof) {
 
 // Central Marshalling Functions
 void push_sint8(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     *(int8_t *)p = (int8_t)SvIV(sv);
 }
 void push_uint8(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     *(uint8_t *)p = (uint8_t)SvUV(sv);
 }
 void push_sint16(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     *(int16_t *)p = (int16_t)SvIV(sv);
 }
 void push_uint16(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     *(uint16_t *)p = (uint16_t)SvUV(sv);
 }
 void push_sint32(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     *(int32_t *)p = (int32_t)SvIV(sv);
 }
 void push_uint32(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     *(uint32_t *)p = (uint32_t)SvUV(sv);
 }
 void push_sint64(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     *(int64_t *)p = (int64_t)SvIV(sv);
 }
 void push_uint64(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     *(uint64_t *)p = (uint64_t)SvUV(sv);
 }
 void push_float(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     *(float *)p = (float)SvNV(sv);
 }
 void push_double(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     *(double *)p = (double)SvNV(sv);
 }
 void push_long_double(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     *(long double *)p = (long double)SvNV(sv);
 }
 void push_bool(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     *(bool *)p = SvTRUE(sv);
 }
 #if !defined(INFIX_COMPILER_MSVC)
 void push_sint128(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     croak("128-bit integer marshalling not yet implemented");
 }
 void push_uint128(pTHX_ const infix_type * t, SV * sv, void * p) {
-    //~ PING;
     croak("128-bit integer marshalling not yet implemented");
 }
 #endif
 
 void push_struct(pTHX_ const infix_type * type, SV * sv, void * p) {
-    PING;
-    if (!SvROK(sv) || SvTYPE(SvRV(sv)) != SVt_PVHV)
-        croak("Expected a HASH reference for struct marshalling");
-    HV * hv = (HV *)SvRV(sv);
+    HV * hv;
+    if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVHV) {
+        hv = (HV *)SvRV(sv);
+    }
+    else if (SvTYPE(sv) == SVt_PVHV) {
+        hv = (HV *)sv;
+    }
+    else {
+        croak("Expected a HASH or HASH reference for struct marshalling");
+    }
+
     for (size_t i = 0; i < type->meta.aggregate_info.num_members; ++i) {
         const infix_struct_member * member = &type->meta.aggregate_info.members[i];
         if (!member->name)
@@ -380,7 +410,6 @@ void push_struct(pTHX_ const infix_type * type, SV * sv, void * p) {
 }
 
 void push_union(pTHX_ const infix_type * type, SV * sv, void * p) {
-    PING;
     if (!SvROK(sv) || SvTYPE(SvRV(sv)) != SVt_PVHV)
         croak("Expected a HASH reference for union marshalling");
     HV * hv = (HV *)SvRV(sv);
@@ -401,7 +430,6 @@ void push_union(pTHX_ const infix_type * type, SV * sv, void * p) {
 }
 
 void push_array(pTHX_ const infix_type * type, SV * sv, void * p) {
-    PING;
     if (!SvROK(sv) || SvTYPE(SvRV(sv)) != SVt_PVAV)
         croak("Expected an ARRAY reference for array marshalling");
     AV * av = (AV *)SvRV(sv);
@@ -423,28 +451,11 @@ void push_array(pTHX_ const infix_type * type, SV * sv, void * p) {
     }
 }
 
-void push_reverse_trampoline(pTHX_ const infix_type * type, SV * sv, void * p) {
-    PING;
-    if (sv_isobject(sv) && sv_derived_from(sv, "Affix::Callback")) {
-        IV tmp = SvIV((SV *)SvRV(sv));
-        Affix_Callback * cb = INT2PTR(Affix_Callback *, tmp);
-        *(void **)p = infix_reverse_get_code(cb->reverse_ctx);
-    }
-    else if (!SvOK(sv) || !SvIV(sv)) {
-        *(void **)p = nullptr;
-    }
-    else {
-        croak("Expected an Affix::Callback object for function pointer marshalling");
-    }
-}
-
 void push_enum(pTHX_ const infix_type * type, SV * sv, void * p) {
-    PING;
     sv2ptr(aTHX_ sv, p, type->meta.enum_info.underlying_type);
 }
 
 void push_complex(pTHX_ const infix_type * type, SV * sv, void * p) {
-    PING;
     if (!SvROK(sv) || SvTYPE(SvRV(sv)) != SVt_PVAV)
         croak("Expected an ARRAY reference with two numbers for complex type marshalling");
     AV * av = (AV *)SvRV(sv);
@@ -461,7 +472,6 @@ void push_complex(pTHX_ const infix_type * type, SV * sv, void * p) {
 }
 
 void push_vector(pTHX_ const infix_type * type, SV * sv, void * p) {
-    PING;
     if (!SvROK(sv) || SvTYPE(SvRV(sv)) != SVt_PVAV)
         croak("Expected an ARRAY reference for vector marshalling");
     AV * av = (AV *)SvRV(sv);
@@ -483,130 +493,128 @@ void push_vector(pTHX_ const infix_type * type, SV * sv, void * p) {
 }
 
 void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
-    PING;
     const infix_type * pointee_type = type->meta.pointer_info.pointee_type;
-    PING;
-    if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVAV) {
-        PING;
-        AV * av = (AV *)SvRV(sv);
-        size_t len = av_len(av) + 1;
-        size_t element_size = infix_type_get_size(pointee_type);
-        char * c_array = (char *)safecalloc(len, element_size);
-        for (size_t i = 0; i < len; ++i) {
-            SV ** elem_sv_ptr = av_fetch(av, i, 0);
-            if (elem_sv_ptr)
-                sv2ptr(aTHX_ * elem_sv_ptr, c_array + (i * element_size), pointee_type);
-        }
-        _pin_sv(aTHX_ sv, type, c_array, true);
-        *(void **)ptr = c_array;
+
+    if (!SvOK(sv)) {
+        *(void **)ptr = NULL;
         return;
     }
-    PING;
+
+    if (SvROK(sv)) {
+        SV * const rv = SvRV(sv);
+        if (SvTYPE(rv) == SVt_PVAV) {
+            AV * av = (AV *)rv;
+            size_t len = av_len(av) + 1;
+            size_t element_size = infix_type_get_size(pointee_type);
+            char * c_array = (char *)safecalloc(len, element_size);
+            for (size_t i = 0; i < len; ++i) {
+                SV ** elem_sv_ptr = av_fetch(av, i, 0);
+                if (elem_sv_ptr)
+                    sv2ptr(aTHX_ * elem_sv_ptr, c_array + (i * element_size), pointee_type);
+            }
+            _pin_sv(aTHX_ sv, type, c_array, true);
+            *(void **)ptr = c_array;
+            return;
+        }
+        if (SvTYPE(rv) == SVt_PVCV) {
+            if (pointee_type->category == INFIX_TYPE_REVERSE_TRAMPOLINE) {
+                push_reverse_trampoline(aTHX_ pointee_type, sv, ptr);
+                return;
+            }
+        }
+
+        const infix_type * copy_type;
+        if (pointee_type->category == INFIX_TYPE_VOID) {
+            if (SvIOK(rv))
+                copy_type = infix_type_create_primitive(INFIX_PRIMITIVE_SINT64);
+            else if (SvNOK(rv))
+                copy_type = infix_type_create_primitive(INFIX_PRIMITIVE_DOUBLE);
+            else if (SvPOK(rv)) {
+                *(void **)ptr = SvPV_nolen(rv);
+                return;
+            }
+            else {
+                croak("Cannot pass reference to this type of scalar for a 'void*' parameter");
+            }
+        }
+        else {
+            copy_type = pointee_type;
+        }
+
+        void * dest_c_ptr = safecalloc(1, infix_type_get_size(copy_type));
+        sv2ptr(aTHX_ rv, dest_c_ptr, copy_type);
+        _pin_sv(aTHX_ rv, copy_type, dest_c_ptr, true);
+        *(void **)ptr = dest_c_ptr;
+        return;
+    }
+
+    if (is_pin(aTHX_ sv)) {
+        *(void **)ptr = _get_pin_from_sv(aTHX_ sv)->pointer;
+        return;
+    }
+
     if (SvPOK(sv) && pointee_type->category == INFIX_TYPE_PRIMITIVE &&
         pointee_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8) {
-        PING;
         *(const char **)ptr = SvPV_nolen(sv);
         return;
     }
-    PING;
-    sv_dump(sv);
-    if (is_pin(aTHX_ sv)) {
-        PING;
-        Affix_Pin * pin = _get_pin_from_sv(aTHX_ sv);
-        PING;
-        *(void **)ptr = pin->pointer;
-        PING;
-        return;
-    }
-    PING;
-    if (sv_isobject(sv) && sv_derived_from(sv, "Affix::Callback")) {
-        PING;
-        IV tmp = SvIV((SV *)SvRV(sv));
-        Affix_Callback * cb = INT2PTR(Affix_Callback *, tmp);
-        *(void **)ptr = infix_reverse_get_code(cb->reverse_ctx);
-        return;
-    }
-    PING;
+
     if (pointee_type->category == INFIX_TYPE_VOID) {
-        PING;
-        *(void **)ptr = SvOK(sv) ? INT2PTR(void *, SvIV(sv)) : nullptr;
+        *(void **)ptr = INT2PTR(void *, SvIV(sv));
         return;
     }
-    PING;
-    void * dest_c_ptr = safecalloc(1, infix_type_get_size(pointee_type));
-    if (!dest_c_ptr)
-        croak("Failed to allocate memory for by-reference argument");
-    if (SvOK(sv))
-        sv2ptr(aTHX_ sv, dest_c_ptr, pointee_type);
-    PING;
-    _pin_sv(aTHX_ sv, pointee_type, dest_c_ptr, true);
-    PING;
-    *(void **)ptr = dest_c_ptr;
+
+    croak("Don't know how to handle this type of scalar as a pointer argument");
 }
 
-//
 SV * pull_sint8(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
     return newSViv(*(int8_t *)p);
 }
 SV * pull_uint8(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
     return newSVuv(*(uint8_t *)p);
 }
 SV * pull_sint16(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
     return newSViv(*(int16_t *)p);
 }
 SV * pull_uint16(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
     return newSVuv(*(uint16_t *)p);
 }
 SV * pull_sint32(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
     return newSViv(*(int32_t *)p);
 }
 SV * pull_uint32(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
     return newSVuv(*(uint32_t *)p);
 }
 SV * pull_sint64(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
     return newSViv(*(int64_t *)p);
 }
 SV * pull_uint64(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
     return newSVuv(*(uint64_t *)p);
 }
 SV * pull_float(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
     return newSVnv(*(float *)p);
 }
 SV * pull_double(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
     return newSVnv(*(double *)p);
 }
 SV * pull_long_double(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
     return newSVnv(*(long double *)p);
 }
 SV * pull_bool(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
     return newSVbool(*(bool *)p);
 }
 SV * pull_void(pTHX_ const infix_type * t, void * p) {
-    //~ PING;
-    return newSV(0);  // Return undef, but as a new SV
+    return newSV(0);
 }
 #if !defined(INFIX_COMPILER_MSVC)
-SV * pull_sint128(pTHX_ const infix_type * t, void * p) {  //~ PING;
+SV * pull_sint128(pTHX_ const infix_type * t, void * p) {
     croak("128-bit integer marshalling not yet implemented");
 }
-SV * pull_uint128(pTHX_ const infix_type * t, void * p) {  //~ PING;
+SV * pull_uint128(pTHX_ const infix_type * t, void * p) {
     croak("128-bit integer marshalling not yet implemented");
 }
 #endif
 
-// START of new pull handlers
 SV * pull_struct(pTHX_ const infix_type * type, void * p) {
     HV * hv = newHV();
     for (size_t i = 0; i < type->meta.aggregate_info.num_members; ++i) {
@@ -623,9 +631,9 @@ SV * pull_struct(pTHX_ const infix_type * type, void * p) {
 
 SV * pull_union(pTHX_ const infix_type * type, void * p) {
     croak(
-        "Cannot pull a C union directly; the active member is unknown. "
-        "Instead, pull a pointer to the union and dereference it to the desired type.");
-    return newSV(0);  // Unreachable
+        "Cannot pull a C union directly; the active member is unknown. Instead, pull a pointer to the union and "
+        "dereference it to the desired type.");
+    return newSV(0);
 }
 
 SV * pull_array(pTHX_ const infix_type * type, void * p) {
@@ -649,7 +657,6 @@ SV * pull_reverse_trampoline(pTHX_ const infix_type * type, void * p) {
 }
 
 SV * pull_enum(pTHX_ const infix_type * type, void * p) {
-    // An enum is just its underlying integer type. Delegate to the appropriate primitive puller.
     SV * sv = newSV(0);
     ptr2sv(aTHX_ p, sv, type->meta.enum_info.underlying_type);
     return sv;
@@ -691,22 +698,26 @@ SV * pull_vector(pTHX_ const infix_type * type, void * p) {
 
 SV * pull_pointer(pTHX_ const infix_type * type, void * ptr) {
     void * c_ptr = *(void **)ptr;
+
+    if (c_ptr == NULL) {
+        return newSV(0);
+    }
+
     if (type->meta.pointer_info.pointee_type->category == INFIX_TYPE_PRIMITIVE &&
         type->meta.pointer_info.pointee_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8)
         return newSVpv((const char *)c_ptr, 0);
 
-    // For other pointers, create a pin object that wraps the raw C pointer
     Affix_Pin * pin;
     Newxz(pin, 1, Affix_Pin);
     pin->pointer = c_ptr;
-    pin->managed = false;  // We don't own memory returned from C
+    pin->managed = false;
     pin->type = type->meta.pointer_info.pointee_type;
-    pin->type_arena = nullptr;  // Type is owned by the Affix object, not this pin
+    pin->type_arena = nullptr;
 
     SV * obj_data = newSV(0);
     sv_setiv(obj_data, PTR2IV(pin));
     SV * rv = newRV_inc(obj_data);
-    sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));  // Or a more specific pin class
+    sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
     sv_magicext(obj_data, nullptr, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
 
     return rv;
@@ -829,49 +840,37 @@ void sv2ptr(pTHX_ SV * perl_sv, void * c_ptr, const infix_type * type) {
 void Affix_trigger(pTHX_ CV * cv) {
     dSP;
     dAXMARK;
-    //~ PING;
 
     Affix * affix = (Affix *)CvXSUBANY(cv).any_ptr;
-    //~ PING;
 
     if (!affix)
         croak("Internal error: Affix context is nullptr in trigger");
-    //~ PING;
 
     size_t num_args = infix_forward_get_num_args(affix->infix);
-    //~ PING;
 
     if ((SP - MARK) != num_args)
         croak("Wrong number of arguments to affixed function. Expected %" UVuf ", got %" UVuf,
               (UV)num_args,
               (UV)(SP - MARK));
-    //~ PING;
 
     affix->args_arena->current_offset = 0;
     void ** c_args = infix_arena_alloc(affix->args_arena, sizeof(void *) * num_args, _Alignof(void *));
     for (size_t i = 0; i < num_args; ++i) {
-        //~ PING;
-
         const infix_type * arg_type = infix_forward_get_arg_type(affix->infix, i);
         void * c_arg_ptr =
             infix_arena_alloc(affix->args_arena, infix_type_get_size(arg_type), infix_type_get_alignment(arg_type));
         affix->push[i](aTHX_ arg_type, ST(i), c_arg_ptr);
         c_args[i] = c_arg_ptr;
-        //~ PING;
     }
-    //~ PING;
 
     const infix_type * ret_type = infix_forward_get_return_type(affix->infix);
     void * ret_ptr =
         infix_arena_alloc(affix->args_arena, infix_type_get_size(ret_type), infix_type_get_alignment(ret_type));
     affix->cif(ret_ptr, c_args);
-    //~ PING;
 
     SV * return_sv = affix->pull(aTHX_ ret_type, ret_ptr);
-    //~ PING;
 
     ST(0) = sv_2mortal(return_sv);
-    //~ PING;
 
     XSRETURN(1);
 }
@@ -879,57 +878,41 @@ void Affix_trigger(pTHX_ CV * cv) {
 void xxAffix_trigger(pTHX_ CV * cv) {
     dSP;
     dAXMARK;
-    //~ dMY_CXT;
-    PING;
 
     Affix * affix = (Affix *)CvXSUBANY(cv).any_ptr;
-    PING;
 
     if (!affix)
         croak("Internal error: Affix context is nullptr in trigger");
-    PING;
 
     size_t num_args = infix_forward_get_num_args(affix->infix);
-    PING;
 
     if ((SP - MARK) != num_args)
         croak("Wrong number of arguments to affixed function. Expected %" UVuf ", got %" UVuf,
               (UV)num_args,
               (UV)(SP - MARK));
-    PING;
 
     // Set the thread-local context so marshalling functions can access the arena.
     affix->args_arena->current_offset = 0;
     void ** c_args = infix_arena_alloc(affix->args_arena, sizeof(void *) * num_args, _Alignof(void *));
     for (size_t i = 0; i < num_args; ++i) {
-        PING;
         const infix_type * arg_type = infix_forward_get_arg_type(affix->infix, i);
-        PING;
         void * c_arg_ptr =
             infix_arena_alloc(affix->args_arena, infix_type_get_size(arg_type), infix_type_get_alignment(arg_type));
-        PING;
-        warn("i: %u", i);
+        warn("i: %u", (unsigned int)i);
         sv_dump(ST(i));
 
         affix->push[i](aTHX_ arg_type, ST(i), c_arg_ptr);
-        PING;
         c_args[i] = c_arg_ptr;
-        PING;
     }
-    PING;
     // Unset the context variable now that marshalling is complete.
     const infix_type * ret_type = infix_forward_get_return_type(affix->infix);
     void * ret_ptr =
         infix_arena_alloc(affix->args_arena, infix_type_get_size(ret_type), infix_type_get_alignment(ret_type));
-    PING;
 
     affix->cif(ret_ptr, c_args);
-    PING;
 
     SV * return_sv = affix->pull(aTHX_ ret_type, ret_ptr);
-    PING;
     ST(0) = sv_2mortal(return_sv);
-    PING;
     XSRETURN(1);
 }
 
@@ -941,15 +924,12 @@ XS_INTERNAL(Affix_affix) {
     dMY_CXT;
     if (items != 3)
         croak_xs_usage(cv, "Affix::affix($target, $name_spec, $signature)");
-    //~ PING;
 
     void * symbol = nullptr;
     char * rename = nullptr;
     infix_library_t * implicit_lib_handle = nullptr;
     SV * target_sv = ST(0);
     SV * name_sv = ST(1);
-
-    //~ PING;
 
     const char * symbol_name_str = nullptr;
     const char * rename_str = nullptr;
@@ -965,21 +945,17 @@ XS_INTERNAL(Affix_affix) {
         symbol_name_str = rename_str = SvPV_nolen(name_sv);
 
     rename = (char *)rename_str;
-    //~ PING;
 
     if (sv_isobject(target_sv) && sv_derived_from(target_sv, "Affix::Lib")) {
-        //~ PING;
         IV tmp = SvIV((SV *)SvRV(target_sv));
         infix_library_t * lib = INT2PTR(infix_library_t *, tmp);
         symbol = infix_library_get_symbol(lib, symbol_name_str);
     }
     else if (_get_pin_from_sv(aTHX_ target_sv)) {
-        //~ PING;
         Affix_Pin * pin = _get_pin_from_sv(aTHX_ target_sv);
         symbol = pin->pointer;
     }
     else if (!SvOK(target_sv)) {
-        //~ PING;
         implicit_lib_handle = infix_library_open(nullptr);
         if (!implicit_lib_handle)
             XSRETURN_UNDEF;
@@ -987,30 +963,21 @@ XS_INTERNAL(Affix_affix) {
         symbol = infix_library_get_symbol(implicit_lib_handle, symbol_name_str);
     }
     else {
-        //~ PING;
         const char * path = SvPV_nolen(target_sv);
         implicit_lib_handle = infix_library_open(path);
-        //~ PING;
         if (implicit_lib_handle == nullptr) {
-            PING;
             infix_error_details_t err = infix_get_last_error();
             croak("Failed to load library from path '%s': %s", path, err.message);
         }
-        //~ PING;
-        //~ warn("infix_library_get_symbol(%p, '%s')", implicit_lib_handle, symbol_name_str);
         symbol = infix_library_get_symbol(implicit_lib_handle, symbol_name_str);
-        //~ PING;
     }
-    //~ PING;
 
     if (symbol == nullptr)
         XSRETURN_UNDEF;
-    //~ PING;
 
     Affix * affix = nullptr;
     Newxz(affix, 1, Affix);
     affix->lib_handle = implicit_lib_handle;
-    //~ PING;
 
     const char * signature = SvPV_nolen(ST(2));
     infix_status status = infix_forward_create(&affix->infix, signature, symbol, MY_CXT.registry);
@@ -1019,9 +986,8 @@ XS_INTERNAL(Affix_affix) {
             infix_library_close(affix->lib_handle);
         safefree(affix);
         infix_error_details_t err = infix_get_last_error();
-        croak("Failed to create trampoline: %s (code %d, pos %zu)", err.message, err.code, err.position);
+        croak_sv(_format_parse_error(aTHX_ "to create trampoline", signature, err));
     }
-    //~ PING;
 
     affix->cif = infix_forward_get_code(affix->infix);
     size_t num_args = infix_forward_get_num_args(affix->infix);
@@ -1039,27 +1005,21 @@ XS_INTERNAL(Affix_affix) {
     affix->pull = get_pull_handler(ret_type);
     if (affix->pull == nullptr)
         croak("Unsupported return type in signature");
-    //~ PING;
 
     affix->args_arena = infix_arena_create(total_arena_size);
     char prototype_buf[256] = {0};
     for (size_t i = 0; i < num_args; ++i)
         strcat(prototype_buf, "$");
-    //~ PING;
 
     CV * cv_new = newXSproto_portable(ix == 0 ? rename : nullptr, Affix_trigger, __FILE__, prototype_buf);
     if (UNLIKELY(cv_new == nullptr))
         croak("Failed to install new XSUB");
     CvXSUBANY(cv_new).any_ptr = (void *)affix;
-    //~ PING;
 
     SV * obj = newRV_inc(MUTABLE_SV(cv_new));
     sv_bless(obj, gv_stashpv("Affix", GV_ADD));
-    //~ overload_add(gv_stashpv("Affix", GV_ADD), "&{}", newRV_inc(MUTABLE_SV(cv_new)));
-    //~ PING;
 
     ST(0) = sv_2mortal(obj);
-    //~ PING;
 
     XSRETURN(1);
 }
@@ -1113,163 +1073,146 @@ XS_INTERNAL(Affix_test_multiply) {
 
 // Callback (Reverse FFI) Implementation
 void _affix_callback_handler_entry(infix_context_t * ctx, void * retval, void ** args) {
-    //~ void _affix_callback_handler_entry(infix_context_t * ctx, SV * arg) {
-    PING;
     Affix_Callback_Data * cb_data = (Affix_Callback_Data *)infix_reverse_get_user_data(ctx);
     if (!cb_data)
         return;
     dTHXa(cb_data->perl);
-    PING;
     dSP;
-    PING;
     ENTER;
     SAVETMPS;
     PUSHMARK(SP);
-    PING;
     size_t num_args = infix_reverse_get_num_args(ctx);
-    PING;
     for (size_t i = 0; i < num_args; ++i) {
-        warn("i: %d, num_args: %d", i, num_args);
-        PING;
         const infix_type * type = infix_reverse_get_arg_type(ctx, i);
-        PING;
         Affix_Pull puller = get_pull_handler(type);
-        PING;
         if (!puller)
             croak("Unsupported callback argument type");
-        PING;
 
         XPUSHs(sv_2mortal(puller(aTHX_ type, args[i])));
     }
-    PING;
 
-    sv_dump(cb_data->perl_sub);
-    PING;
     PUTBACK;
     size_t count = call_sv(SvRV(cb_data->perl_sub), G_SCALAR);
-    PING;
 
     SPAGAIN;
     const infix_type * ret_type = infix_reverse_get_return_type(ctx);
-    PING;
 
     if (ret_type->category != INFIX_TYPE_VOID) {
-        PING;
-
         if (count != 1)
             croak("Callback was expected to return 1 value, but returned %zu", count);
-        PING;
 
         SV * return_sv = POPs;
-        PING;
-
-        sv_dump(return_sv);
-        PING;
         Affix_Push pusher = get_push_handler(ret_type);
-        PING;
 
         if (pusher == nullptr)
             croak("Unsupported callback return type");
-        PING;
 
         pusher(aTHX_ ret_type, return_sv, retval);
-
-        PING;
     }
-    PING;
 
     PUTBACK;
     FREETMPS;
     LEAVE;
-    PING;
     return;
 }
 
-XS_INTERNAL(Affix_Callback_DESTROY) {
-    dXSARGS;
-    if (items != 1)
-        croak_xs_usage(cv, "callback_obj");
-    IV tmp = SvIV((SV *)SvRV(ST(0)));
-    Affix_Callback * cb = INT2PTR(Affix_Callback *, tmp);
-    if (cb) {
-        if (cb->callback_data) {
-            SvREFCNT_dec(cb->callback_data->perl_sub);
-            Safefree(cb->callback_data);
+static MGVTBL Affix_implicit_callback_vtbl = {
+    nullptr, nullptr, nullptr, nullptr, Affix_free_implicit_callback, nullptr, nullptr, nullptr};
+
+int Affix_free_implicit_callback(pTHX_ SV * sv, MAGIC * mg) {
+    PERL_UNUSED_VAR(sv);
+    Implicit_Callback_Magic * magic_data = (Implicit_Callback_Magic *)mg->mg_ptr;
+
+    if (magic_data) {
+        if (magic_data->callback_data) {
+            SvREFCNT_dec(magic_data->callback_data->perl_sub);
+            Safefree(magic_data->callback_data);
         }
-        if (cb->reverse_ctx) {
-            infix_reverse_destroy(cb->reverse_ctx);
+        if (magic_data->reverse_ctx) {
+            infix_reverse_destroy(magic_data->reverse_ctx);
         }
-        Safefree(cb);
+        Safefree(magic_data);
     }
-    XSRETURN_EMPTY;
+    mg->mg_ptr = nullptr;
+    return 0;
 }
 
-XS_INTERNAL(Affix_callback) {
-    dXSARGS;
-    if (items != 2)
-        croak_xs_usage(cv, "$signature, $coderef");
-    const char * signature = SvPV_nolen(ST(0));
-    SV * coderef = ST(1);
-    if (!SvROK(coderef) || SvTYPE(SvRV(coderef)) != SVt_PVCV)
-        croak("Second argument must be a code reference");
-    PING;
-    Affix_Callback_Data * cb_data;
-    Newxz(cb_data, 1, Affix_Callback_Data);
-    cb_data->perl_sub = newRV_inc(coderef);
-    storeTHX(cb_data->perl);
-    PING;
-    infix_reverse_t * reverse_ctx = nullptr;
-    infix_status status = infix_reverse_create_closure(
-        &reverse_ctx, signature, (void *)_affix_callback_handler_entry, (void *)cb_data, nullptr);
-    PING;
-    if (status != INFIX_SUCCESS) {
-        SvREFCNT_dec(cb_data->perl_sub);
-        Safefree(cb_data);
-        croak("Failed to create callback trampoline");
+void push_reverse_trampoline(pTHX_ const infix_type * type, SV * sv, void * p) {
+    dMY_CXT;
+
+    if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVCV) {
+        SV * coderef = SvRV(sv);
+        MAGIC * mg = mg_findext(coderef, PERL_MAGIC_ext, &Affix_implicit_callback_vtbl);
+
+        if (mg) {
+            Implicit_Callback_Magic * magic_data = (Implicit_Callback_Magic *)mg->mg_ptr;
+            *(void **)p = infix_reverse_get_code(magic_data->reverse_ctx);
+        }
+        else {
+            Affix_Callback_Data * cb_data;
+            Newxz(cb_data, 1, Affix_Callback_Data);
+            cb_data->perl_sub = newRV_inc(coderef);
+            storeTHX(cb_data->perl);
+
+            char signature_buf[256];
+            if (infix_type_print(signature_buf, sizeof(signature_buf), (infix_type *)type, INFIX_DIALECT_SIGNATURE) !=
+                INFIX_SUCCESS) {
+                SvREFCNT_dec(cb_data->perl_sub);
+                Safefree(cb_data);
+                croak("Internal error: Failed to serialize callback signature");
+            }
+
+            infix_reverse_t * reverse_ctx = nullptr;
+            infix_status status = infix_reverse_create_closure(
+                &reverse_ctx, signature_buf, (void *)_affix_callback_handler_entry, (void *)cb_data, MY_CXT.registry);
+
+            if (status != INFIX_SUCCESS) {
+                SvREFCNT_dec(cb_data->perl_sub);
+                Safefree(cb_data);
+                infix_error_details_t err = infix_get_last_error();
+                croak_sv(_format_parse_error(aTHX_ "for callback", signature_buf, err));
+            }
+
+            Implicit_Callback_Magic * magic_data;
+            Newxz(magic_data, 1, Implicit_Callback_Magic);
+            magic_data->reverse_ctx = reverse_ctx;
+            magic_data->callback_data = cb_data;
+
+            mg = sv_magicext(
+                coderef, nullptr, PERL_MAGIC_ext, &Affix_implicit_callback_vtbl, (const char *)magic_data, 0);
+
+            *(void **)p = infix_reverse_get_code(reverse_ctx);
+        }
     }
-
-    Affix_Callback * cb;
-    Newxz(cb, 1, Affix_Callback);
-    cb->reverse_ctx = reverse_ctx;
-    cb->callback_data = cb_data;
-
-    SV * obj_data = newSV(0);
-    sv_setiv(obj_data, PTR2IV(cb));
-    // Overload the numeric conversion `0+` to return the C function pointer.
-    //~ overload_add(gv_stashpv("Affix::Callback", GV_ADD), "0+", newSViv(PTR2IV(infix_reverse_get_code(reverse_ctx))));
-
-    ST(0) = sv_2mortal(sv_bless(newRV_inc(obj_data), gv_stashpv("Affix::Callback", GV_ADD)));
-    XSRETURN(1);
+    else if (!SvOK(sv) || !SvIV(sv)) {
+        *(void **)p = nullptr;
+    }
+    else {
+        croak("Argument for a callback must be a code reference or undef.");
+    }
 }
+
 
 XS_INTERNAL(Affix_as_string) {
     dVAR;
     dXSARGS;
-    PING;
     if (items < 1)
         croak_xs_usage(cv, "$affix");
     {
         char * RETVAL;
         dXSTARG;
         Affix * affix;
-        PING;
         if (sv_derived_from(ST(0), "Affix")) {
-            PING;
             IV tmp = SvIV((SV *)SvRV(ST(0)));
             affix = INT2PTR(Affix *, tmp);
-            PING;
         }
         else
             croak("affix is not of type Affix");
-        PING;
         RETVAL = (char *)affix->infix->target_fn;
-        PING;
         sv_setpv(TARG, RETVAL);
         XSprePUSH;
         PUSHTARG;
-        PING;
     }
-    PING;
     XSRETURN(1);
 };
 
@@ -1290,148 +1233,63 @@ XS_INTERNAL(Affix_END) {
                 safefree(entry);
             }
         }
-        hv_undef(MY_CXT.lib_registry);  // Frees the hash itself
-        MY_CXT.lib_registry = nullptr;  // Guards against double-free
+        hv_undef(MY_CXT.lib_registry);
+        MY_CXT.lib_registry = nullptr;
+    }
+    if (MY_CXT.registry) {
+        infix_registry_destroy(MY_CXT.registry);
+        MY_CXT.registry = nullptr;
     }
     XSRETURN_EMPTY;
 }
 
-XS_INTERNAL(Affix_Registry_new) {
+XS_INTERNAL(Affix_typedef) {
     dXSARGS;
+    dMY_CXT;
     if (items != 1)
-        croak_xs_usage(cv, "class");
-    infix_registry_t * reg = infix_registry_create();
-    if (!reg)
-        croak("Failed to create a new type registry");
-    ST(0) = sv_2mortal(sv_bless(newRV_inc(newSViv(PTR2IV(reg))), gv_stashpv("Affix::Registry", GV_ADD)));
-    XSRETURN(1);
-}
+        croak_xs_usage(cv, "types_string");
 
-XS_INTERNAL(Affix_Registry_DESTROY) {
-    dXSARGS;
-    if (items != 1)
-        croak_xs_usage(cv, "registry_obj");
-    IV tmp = SvIV((SV *)SvRV(ST(0)));
-    infix_registry_t * reg = INT2PTR(infix_registry_t *, tmp);
-    if (reg)
-        infix_registry_destroy(reg);
-    XSRETURN_EMPTY;
-}
+    const char * types = SvPV_nolen(ST(0));
 
-XS_INTERNAL(Affix_Registry_define) {
-    dXSARGS;
-    if (items != 2)
-        croak_xs_usage(cv, "registry_obj, types_string");
-    PING;
-    IV tmp = SvIV((SV *)SvRV(ST(0)));
-    PING;
-
-    infix_registry_t * reg = INT2PTR(infix_registry_t *, tmp);
-    PING;
-
-    const char * types = SvPV_nolen(ST(1));
-    PING;
-
-    if (infix_register_types(reg, types) != INFIX_SUCCESS) {
-        PING;
-
+    if (infix_register_types(MY_CXT.registry, types) != INFIX_SUCCESS) {
         infix_error_details_t err = infix_get_last_error();
-        PING;
-
-        croak("Failed to register types: %s (at position %zu)", err.message, err.position);
+        croak_sv(_format_parse_error(aTHX_ "in typedef", types, err));
     }
-    PING;
 
     XSRETURN_YES;
-}
-
-XS_INTERNAL(Affix_set_registry) {
-    dXSARGS;
-    dMY_CXT;
-    if (items != 1)
-        croak_xs_usage(cv, "registry_obj");
-    if (!sv_isobject(ST(0)) || !sv_derived_from(ST(0), "Affix::Registry"))
-        croak("Argument must be an Affix::Registry object");
-    IV tmp = SvIV((SV *)SvRV(ST(0)));
-    MY_CXT.registry = INT2PTR(infix_registry_t *, tmp);
-    XSRETURN_EMPTY;
-}
-
-XS_INTERNAL(Affix_clear_registry) {
-    dXSARGS;
-    dMY_CXT;
-    PERL_UNUSED_VAR(items);
-    MY_CXT.registry = nullptr;
-    XSRETURN_EMPTY;
-}
-
-XS_INTERNAL(Affix_affix_with) {
-    dXSARGS;
-    dMY_CXT;
-    if (items != 2)
-        croak_xs_usage(cv, "registry_obj, coderef");
-    if (!sv_isobject(ST(0)) || !sv_derived_from(ST(0), "Affix::Registry"))
-        croak("First argument must be an Affix::Registry object");
-    if (!SvROK(ST(1)) || SvTYPE(SvRV(ST(1))) != SVt_PVCV)
-        croak("Second argument must be a code reference");
-
-    IV tmp = SvIV((SV *)SvRV(ST(0)));
-    infix_registry_t * new_reg = INT2PTR(infix_registry_t *, tmp);
-    SV * coderef = ST(1);
-
-    // Save old registry, call coderef, then restore
-    infix_registry_t * old_reg = MY_CXT.registry;
-    MY_CXT.registry = new_reg;
-
-    // dSP;
-    ENTER;
-    SAVETMPS;
-    PUSHMARK(SP);
-    call_sv(coderef, G_DISCARD);
-    FREETMPS;
-    LEAVE;
-
-    MY_CXT.registry = old_reg;
-    XSRETURN_EMPTY;
 }
 
 // Debugging
 void _DumpHex(pTHX_ const void * addr, size_t len, const char * file, int line) {
     if (addr == nullptr) {
-        printf("Dumping %lu bytes from null pointer %p at %s line %d\n", len, addr, file, line);
+        printf("Dumping %lu bytes from null pointer %p at %s line %d\n", (unsigned long)len, addr, file, line);
         fflush(stdout);
         return;
     }
     fflush(stdout);
     int perLine = 16;
-    // Silently ignore silly per-line values.
     if (perLine < 4 || perLine > 64)
         perLine = 16;
     size_t i;
     U8 * buff;
     Newxz(buff, perLine + 1, U8);
     const U8 * pc = (const U8 *)addr;
-    printf("Dumping %lu bytes from %p at %s line %d\n", len, addr, file, line);
-    // Length checks.
+    printf("Dumping %lu bytes from %p at %s line %d\n", (unsigned long)len, addr, file, line);
     if (len == 0)
         croak("ZERO LENGTH");
     for (i = 0; i < len; i++) {
-        if ((i % perLine) == 0) {  // Only print previous-line ASCII buffer for
-            // lines beyond first.
+        if ((i % perLine) == 0) {
             if (i != 0)
                 printf(" | %s\n", buff);
-            printf("#  %03zu ", i);  // Output the offset of current line.
+            printf("#  %03zu ", i);
         }
-        // Now the hex code for the specific character.
         printf(" %02x", pc[i]);
-        // And buffer a printable ASCII character for later.
-        if ((pc[i] < 0x20) || (pc[i] > 0x7e))  // isprint() may be better.
+        if ((pc[i] < 0x20) || (pc[i] > 0x7e))
             buff[i % perLine] = '.';
         else
             buff[i % perLine] = pc[i];
         buff[(i % perLine) + 1] = '\0';
     }
-    // Pad out last line if not exactly perLine characters.
     while ((i % perLine) != 0) {
         printf("   ");
         i++;
@@ -1441,7 +1299,6 @@ void _DumpHex(pTHX_ const void * addr, size_t len, const char * file, int line) 
     fflush(stdout);
 }
 
-#define DD(scalar) _DD(aTHX_ scalar, __FILE__, __LINE__)
 void _DD(pTHX_ SV * scalar, const char * file, int line) {
     Perl_load_module(aTHX_ PERL_LOADMOD_NOIMPORT, newSVpvs("Data::Printer"), nullptr, nullptr, nullptr);
     if (!get_cvs("Data::Printer::p", GV_NOADD_NOINIT | GV_NO_SVGMAGIC))
@@ -1495,6 +1352,10 @@ void boot_Affix(pTHX_ CV * cv) {
 
     MY_CXT_INIT;
     MY_CXT.lib_registry = newHV();
+    MY_CXT.registry = infix_registry_create();
+    if (!MY_CXT.registry) {
+        croak("Failed to initialize the global type registry");
+    }
 
     newXS("Affix::END", Affix_END, __FILE__);
 
@@ -1502,21 +1363,8 @@ void boot_Affix(pTHX_ CV * cv) {
     newXS("Affix::wrap", Affix_affix, __FILE__);
     newXS("Affix::DESTROY", Affix_DESTROY, __FILE__);
 
-    //(void)newXSproto_portable("Affix::Type::Pointer::(|", Affix_Type_Pointer, __FILE__, "");
-    /* The magic for overload gets a GV* via gv_fetchmeth as */
-    /* mentioned above, and looks in the SV* slot of it for */
-    /* the "fallback" status. */
     sv_setsv(get_sv("Affix::()", TRUE), &PL_sv_yes);
-    /* Making a sub named "Affix::Pointer::()" allows the package */
-    /* to be findable via fetchmethod(), and causes */
-    /* overload::Overloaded("Affix::Pointer") to return true. */
-    // (void)newXS_deffile("Affix::Pointer::()", Affix_Pointer_as_string);
     (void)newXSproto_portable("Affix::()", Affix_as_string, __FILE__, "$;@");
-    //(void)newXSproto_portable("Affix::(\"\"", Affix_Pointer_as_string, __FILE__, "$;@");
-    //(void)newXSproto_portable("Affix::as_string", Affix_Pointer_as_string, __FILE__, "$;@");
-    //(void)newXSproto_portable("Affix::(%{}", Affix_Pointer_deref_hash, __FILE__, "$;@");
-    //(void)newXSproto_portable("Affix::(@{}", Affix_Pointer_deref_list, __FILE__, "$;@");
-    //  ${}  @{}  %{}  &{}  *{}
 
     newXS("Affix::load_library", Affix_load_library, __FILE__);
     sv_setsv(get_sv("Affix::Lib::()", TRUE), &PL_sv_yes);
@@ -1533,33 +1381,18 @@ void boot_Affix(pTHX_ CV * cv) {
 
     newXS("Affix::test_multiply", Affix_test_multiply, __FILE__);
     newXS("Affix::sizeof", Affix_sizeof, __FILE__);
-    newXS("Affix::callback", Affix_callback, __FILE__);
-    newXS("Affix::Callback::DESTROY", Affix_Callback_DESTROY, __FILE__);
+    newXS("Affix::typedef", Affix_typedef, __FILE__);
 
-    export_function("Affix", "sizeof", "core");  // Add to the :core tag
+    export_function("Affix", "sizeof", "core");
     export_function("Affix", "affix", "core");
     export_function("Affix", "wrap", "core");
     export_function("Affix", "load_library", "lib");
     export_function("Affix", "find_symbol", "lib");
     export_function("Affix", "get_last_error_message", "core");
-
-    export_function("Affix", "callback", "callback");
-
-    newXS("Affix::Registry::new", Affix_Registry_new, __FILE__);
-    newXS("Affix::Registry::DESTROY", Affix_Registry_DESTROY, __FILE__);
-    newXS("Affix::Registry::define", Affix_Registry_define, __FILE__);
-
-    newXS("Affix::set_registry", Affix_set_registry, __FILE__);
-    newXS("Affix::clear_registry", Affix_clear_registry, __FILE__);
-    newXS("Affix::affix_with", Affix_affix_with, __FILE__);
-
-    export_function("Affix", "set_registry", "registry");
-    export_function("Affix", "clear_registry", "registry");
-    export_function("Affix", "affix_with", "registry");
+    export_function("Affix", "typedef", "registry");
 
     // Debugging
     (void)newXSproto_portable("Affix::sv_dump", Affix_sv_dump, __FILE__, "$");
-    //
 
     Perl_xs_boot_epilog(aTHX_ ax);
 }

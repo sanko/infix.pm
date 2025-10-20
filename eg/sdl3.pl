@@ -11,10 +11,10 @@ package SDL3 {
     use Data::Dump;
     ddx Alien::SDL3->dynamic_libs;
     my ( $sdl3, @etc_libs ) = Alien::SDL3->dynamic_libs;
-    warn `nm $sdl3`;
 
+    #~ warn `nm $sdl3`;
     # SDL_version.h
-    pin our ($SDL_MAJOR_VERSION), $sdl3, 'SDL_MAJOR_VERSON', 'int';
+    #~ pin our ($SDL_MAJOR_VERSION), $sdl3, 'SDL_MAJOR_VERSON', 'int';
     affix $sdl3, 'SDL_GetRevision', '()->*char';
     affix $sdl3, 'SDL_GetVersion',  '()->int';
     #
