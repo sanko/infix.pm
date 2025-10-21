@@ -35,7 +35,7 @@ static SV * _format_parse_error(pTHX_ const char * context_msg, const char * sig
     int caret_pos = err.position - start + start_indicator_len;
     snprintf(pointer, sizeof(pointer), "%*s^", caret_pos, "");
 
-    // Combine everything into a final error message, using the message from the infix library.
+    // Combine everything into a final error message
     return sv_2mortal(newSVpvf("Failed to parse signature %s:\n\n  %s\n  %s\n\nError: %s (at position %zu)",
                                context_msg,
                                snippet,
@@ -390,21 +390,28 @@ void push_struct(pTHX_ const infix_type * type, SV * sv, void * p) {
     if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVHV) {
         hv = (HV *)SvRV(sv);
     }
-    else if (SvTYPE(sv) == SVt_PVHV) {
-        hv = (HV *)sv;
-    }
     else {
-        croak("Expected a HASH or HASH reference for struct marshalling");
+        croak("Expected a HASH reference for struct marshalling");
     }
 
     for (size_t i = 0; i < type->meta.aggregate_info.num_members; ++i) {
         const infix_struct_member * member = &type->meta.aggregate_info.members[i];
         if (!member->name)
             continue;
+
+        void * member_ptr = (char *)p + member->offset;
         SV ** member_sv_ptr = hv_fetch(hv, member->name, strlen(member->name), 0);
+
         if (member_sv_ptr) {
-            void * member_ptr = (char *)p + member->offset;
+            // Key exists: Marshal from Perl to C
             sv2ptr(aTHX_ * member_sv_ptr, member_ptr, member->type);
+        }
+        else {
+            // Key does not exist: Create a new scalar, pin it to the C memory,
+            // and store it in the user's hash. This "auto-vivifies" the hash.
+            SV * new_member_sv = newSV(0);
+            _pin_sv(aTHX_ new_member_sv, member->type, member_ptr, false);
+            hv_store(hv, member->name, strlen(member->name), new_member_sv, 0);
         }
     }
 }
@@ -621,8 +628,13 @@ SV * pull_struct(pTHX_ const infix_type * type, void * p) {
         const infix_struct_member * member = &type->meta.aggregate_info.members[i];
         if (member->name) {
             void * member_ptr = (char *)p + member->offset;
+            // Create a new scalar that will be the value in the hash
             SV * member_sv = newSV(0);
-            ptr2sv(aTHX_ member_ptr, member_sv, member->type);
+            // Pin this new scalar directly to the C memory of the struct member.
+            // This makes the hash a "live view" of the C data.
+            _pin_sv(
+                aTHX_ member_sv, member->type, member_ptr, false);  // 'false' because Perl doesn't own this C memory.
+
             hv_store(hv, member->name, strlen(member->name), member_sv, 0);
         }
     }
