@@ -212,7 +212,7 @@ subtest 'Library Loading and Lifecycle' => sub {
     my $bad_lib = load_library('non_existent_library_12345.so');
     is( $bad_lib, undef, 'load_library returns undef for a non-existent library' );
     my $err = get_last_error_message();
-    like( $err, qr/found|cannot open|no such file/i, 'get_last_error_message provides a useful error on failed load' );
+    like( $err, qr/failed/i, 'get_last_error_message provides a useful error on failed load' );
     pass('Library objects will be destroyed automatically at scope exit');
 };
 subtest 'Symbol Finding' => sub {
@@ -294,8 +294,8 @@ subtest 'Forward Calls: Comprehensive Pointer Types' => sub {
         is $string, 'C changed me', 'C function was able to modify the inner pointer';
     };
     subtest 'Struct Pointers (*MyStruct)' => sub {
-        plan 4;
-        typedef('@MyStruct = { id: int32, value: float64, label: *char };');
+        plan 5;
+        ok typedef('@MyStruct = { id: int32, value: float64, label: *char };'), 'typedef("@MyStruct = ...")';
         isa_ok my $init_struct = wrap( $lib_path, 'init_struct', '(*@MyStruct, int32, float64, *char)->void' ), ['Affix'];
         my %struct_hash;
         $init_struct->( \%struct_hash, 101, 9.9, "Initialized" );
@@ -316,13 +316,12 @@ subtest 'Forward Calls: Comprehensive Pointer Types' => sub {
 subtest 'Type Registry and Typedefs' => sub {
     plan 5;
     note 'Defining named types for subsequent tests.';
-    ok typedef(
-        '@Point    = { x: int32, y: int32 };' .
-            '@Rect     = { top_left: @Point, bottom_right: @Point, name: *char };' .
-            '@MyStruct = { id: int32, value: float64, label: *char };' .
-            '@MyUnion  = { i:int32, f:float32, c:[8:char] };'    # FIX: Use {} for union in typedef
-        ),
-        'Successfully defined multiple types using typedef';
+    ok typedef(<<''), 'Successfully defined multiple types using typedef';
+    @Point    = { x: int32, y: int32 };
+    @Rect     = { top_left: @Point, bottom_right: @Point, name: *char };
+    @MyStruct = { id: int32, value: float64, label: *char };
+    @MyUnion  = < i:int32, f:float32, c:[8:char] >;
+
     subtest 'Forward Calls: Nested Structs and By-Value Returns (with Typedefs)' => sub {
         plan 3;
         note 'Testing nested structs and functions that return structs by value.';
@@ -396,5 +395,11 @@ subtest 'Forward Call with Many Arguments' => sub {
     isa_ok my $summer = wrap( $lib_path, 'multi_arg_sum', $sig ), ['Affix'];
     my $result = $summer->( 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000 );
     is $result, 111111111, 'Correctly passed 9 arguments to a C function';
+};
+subtest 'Parser Error Reporting' => sub {
+    plan 2;
+    note 'Testing that malformed signatures produce helpful error messages.';
+    like dies { Affix::wrap( $lib_path, 'add', '(int, ^, int)->int' ) }, qr[parse signature], 'wrap() dies on invalid signature';
+    like dies { Affix::sizeof('{int, double') },                         qr[parse signature], 'sizeof() dies on unterminated aggregate';
 };
 done_testing;

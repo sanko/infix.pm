@@ -174,8 +174,10 @@ use %s;
         my $build_dir = $cwd->child('infix')->absolute;
 
         #~ chdir $build_dir;
-        warn `$^X infix/build.pl`;
+        system $^X, 'infix/build.pl', '--cflags', '-fPIC';
 
+        #, '--cflags', $cflags;
+        #~ warn `$^X infix/build.pl --cflags="$cflags"`;
         #~ `gmake`;
         return 0;
 
@@ -274,15 +276,9 @@ use %s;
                 source       => $source->stringify,
                 defines      => { VERSION => qq/"$version"/, XS_VERSION => qq/"$version"/ },
                 include_dirs => [
-                    cwd->stringify,
-                    cwd->child('infix')->realpath->stringify,
-                    cwd->child('infix')->child('include')->realpath->stringify,
-                    cwd->child('infix')->child('src')->realpath->stringify,
-                    cwd->child('infix')->child('src/core')->realpath->stringify,
-                    cwd->child('infix')->child('src/arch/x64')->realpath->stringify,
-                    cwd->child('infix')->child('src/arch/aarch64')->realpath->stringify,
-                    $source->dirname,
-                    $pre->child( $meta->name, 'include' )->stringify
+                    cwd->stringify,                                             cwd->child('infix')->realpath->stringify,
+                    cwd->child('infix')->child('include')->realpath->stringify, cwd->child('infix')->child('src')->realpath->stringify,
+                    $source->dirname,                                           $pre->child( $meta->name, 'include' )->stringify
                 ],
                 extra_compiler_flags =>
                     ( '-fPIC -std=' . ( $cxx ? $cppver : $cver ) . ' ' . $cflags . ( $debug ? ' -ggdb3 -g -Wall -Wextra -pedantic' : '' ) )

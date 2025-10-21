@@ -35,7 +35,7 @@ static SV * _format_parse_error(pTHX_ const char * context_msg, const char * sig
     int caret_pos = err.position - start + start_indicator_len;
     snprintf(pointer, sizeof(pointer), "%*s^", caret_pos, "");
 
-    // Combine everything into a final error message
+    // Combine everything into a final error message, using the message from the infix library.
     return sv_2mortal(newSVpvf("Failed to parse signature %s:\n\n  %s\n  %s\n\nError: %s (at position %zu)",
                                context_msg,
                                snippet,
