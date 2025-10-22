@@ -165,14 +165,28 @@ Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv) {
     return nullptr;
 }
 
+// Toggle this to enable/disable detailed debug tracing for this fix
+#define AFFIX_PIN_DEBUG 1
+
 int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg) {
     PERL_UNUSED_VAR(sv);
     Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
     if (pin == nullptr)
         return 0;
 
-    if (pin->managed && pin->pointer)
+#if AFFIX_PIN_DEBUG
+    Perl_warn(aTHX_ "[Affix DEBUG] Affix_free_pin called for SV %p. Pin holds C ptr %p. Managed: %d",
+              (void *)sv,
+              pin->pointer,
+              (int)pin->managed);
+#endif
+
+    if (pin->managed && pin->pointer) {
+#if AFFIX_PIN_DEBUG
+        Perl_warn(aTHX_ "[Affix DEBUG] -> This is a MANAGED pin. Freeing C ptr %p now.", pin->pointer);
+#endif
         safefree(pin->pointer);
+    }
 
     if (pin->type_arena != nullptr)
         infix_arena_destroy(pin->type_arena);
@@ -498,9 +512,16 @@ void push_vector(pTHX_ const infix_type * type, SV * sv, void * p) {
         }
     }
 }
+// Toggle this to enable/disable detailed debug tracing for this fix
+#define AFFIX_POINTER_DEBUG 1
 
 void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
     const infix_type * pointee_type = type->meta.pointer_info.pointee_type;
+
+#if AFFIX_POINTER_DEBUG
+    Perl_warn(aTHX_ "--- [Affix DEBUG] push_pointer entered for type %p ---", (void *)type);
+    sv_dump(sv);
+#endif
 
     if (!SvOK(sv)) {
         *(void **)ptr = NULL;
@@ -509,6 +530,12 @@ void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
 
     if (SvROK(sv)) {
         SV * const rv = SvRV(sv);
+
+#if AFFIX_POINTER_DEBUG
+        Perl_warn(
+            aTHX_ "[Affix DEBUG] Marshalling a REFERENCE. Ref SV is %p, Pointee SV is %p.", (void *)sv, (void *)rv);
+#endif
+
         if (SvTYPE(rv) == SVt_PVAV) {
             AV * av = (AV *)rv;
             size_t len = av_len(av) + 1;
@@ -519,7 +546,10 @@ void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
                 if (elem_sv_ptr)
                     sv2ptr(aTHX_ * elem_sv_ptr, c_array + (i * element_size), pointee_type);
             }
-            _pin_sv(aTHX_ sv, type, c_array, true);
+#if AFFIX_POINTER_DEBUG
+            Perl_warn(aTHX_ "[Affix DEBUG] Pinning C array %p to underlying ARRAY %p.", (void *)c_array, (void *)rv);
+#endif
+            _pin_sv(aTHX_ rv, type, c_array, true);
             *(void **)ptr = c_array;
             return;
         }
@@ -549,8 +579,32 @@ void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
         }
 
         void * dest_c_ptr = safecalloc(1, infix_type_get_size(copy_type));
-        sv2ptr(aTHX_ rv, dest_c_ptr, copy_type);
+
+        SV * sv_to_marshal;
+        if (SvTYPE(rv) == SVt_PVHV) {
+#if AFFIX_POINTER_DEBUG
+            Perl_warn(aTHX_ "[Affix DEBUG] Pointee is a HASH. Marshaller needs the reference SV (%p).", (void *)sv);
+#endif
+            sv_to_marshal = sv;  // Struct/union marshallers expect the reference
+        }
+        else {
+#if AFFIX_POINTER_DEBUG
+            Perl_warn(aTHX_ "[Affix DEBUG] Pointee is a SCALAR. Marshaller needs the de-referenced SV (%p).",
+                      (void *)rv);
+#endif
+            sv_to_marshal = rv;  // Simple scalar marshallers expect the value
+        }
+        sv2ptr(aTHX_ sv_to_marshal, dest_c_ptr, copy_type);
+
+        // ** THE SURGICAL FIX **
+        // The owning pin MUST be attached to the persistent, underlying variable (rv),
+        // not the temporary reference that might have been passed on the stack (sv).
+#if AFFIX_POINTER_DEBUG
+        Perl_warn(
+            aTHX_ "[Affix DEBUG] Attaching OWNING pin for C ptr %p to the UNDERLYING SV %p.", dest_c_ptr, (void *)rv);
+#endif
         _pin_sv(aTHX_ rv, copy_type, dest_c_ptr, true);
+
         *(void **)ptr = dest_c_ptr;
         return;
     }
@@ -1148,7 +1202,6 @@ int Affix_free_implicit_callback(pTHX_ SV * sv, MAGIC * mg) {
     mg->mg_ptr = nullptr;
     return 0;
 }
-
 void push_reverse_trampoline(pTHX_ const infix_type * type, SV * sv, void * p) {
     dMY_CXT;
 
@@ -1157,34 +1210,54 @@ void push_reverse_trampoline(pTHX_ const infix_type * type, SV * sv, void * p) {
         MAGIC * mg = mg_findext(coderef, PERL_MAGIC_ext, &Affix_implicit_callback_vtbl);
 
         if (mg) {
+            // This coderef has already been used as a callback. Reuse the existing trampoline.
             Implicit_Callback_Magic * magic_data = (Implicit_Callback_Magic *)mg->mg_ptr;
             *(void **)p = infix_reverse_get_code(magic_data->reverse_ctx);
         }
         else {
+            // This is the first time this coderef is being used. Create a new trampoline.
             Affix_Callback_Data * cb_data;
             Newxz(cb_data, 1, Affix_Callback_Data);
             cb_data->perl_sub = newRV_inc(coderef);
             storeTHX(cb_data->perl);
 
-            char signature_buf[256];
-            if (infix_type_print(signature_buf, sizeof(signature_buf), (infix_type *)type, INFIX_DIALECT_SIGNATURE) !=
-                INFIX_SUCCESS) {
-                SvREFCNT_dec(cb_data->perl_sub);
-                Safefree(cb_data);
-                croak("Internal error: Failed to serialize callback signature");
+            // Manual creation is more robust than serializing and re-parsing a signature string.
+            // We extract the signature components directly from the parsed type object.
+            infix_type * ret_type = type->meta.func_ptr_info.return_type;
+            size_t num_args = type->meta.func_ptr_info.num_args;
+            size_t num_fixed_args = type->meta.func_ptr_info.num_fixed_args;
+            infix_type ** arg_types;
+            Newx(arg_types, num_args, infix_type *);
+            for (size_t i = 0; i < num_args; ++i) {
+                arg_types[i] = type->meta.func_ptr_info.args[i].type;
             }
 
             infix_reverse_t * reverse_ctx = nullptr;
-            infix_status status = infix_reverse_create_closure(
-                &reverse_ctx, signature_buf, (void *)_affix_callback_handler_entry, (void *)cb_data, MY_CXT.registry);
+            infix_status status = infix_reverse_create_closure_manual(&reverse_ctx,
+                                                                      ret_type,
+                                                                      arg_types,
+                                                                      num_args,
+                                                                      num_fixed_args,
+                                                                      (void *)_affix_callback_handler_entry,
+                                                                      (void *)cb_data);
+
+            // The temporary array of argument types is no longer needed.
+            Safefree(arg_types);
 
             if (status != INFIX_SUCCESS) {
+                // If creation fails, we clean up and generate a detailed error message.
                 SvREFCNT_dec(cb_data->perl_sub);
                 Safefree(cb_data);
+
+                // We still serialize the signature here, but ONLY for the error message.
+                char signature_buf[256];
+                infix_type_print(signature_buf, sizeof(signature_buf), (infix_type *)type, INFIX_DIALECT_SIGNATURE);
                 infix_error_details_t err = infix_get_last_error();
                 croak_sv(_format_parse_error(aTHX_ "for callback", signature_buf, err));
             }
 
+            // Associate the new trampoline with the Perl coderef using "magic"
+            // so we can reuse it later and free it when the coderef is destroyed.
             Implicit_Callback_Magic * magic_data;
             Newxz(magic_data, 1, Implicit_Callback_Magic);
             magic_data->reverse_ctx = reverse_ctx;
@@ -1193,17 +1266,19 @@ void push_reverse_trampoline(pTHX_ const infix_type * type, SV * sv, void * p) {
             mg = sv_magicext(
                 coderef, nullptr, PERL_MAGIC_ext, &Affix_implicit_callback_vtbl, (const char *)magic_data, 0);
 
+            // Return the executable address of the JIT-compiled trampoline.
             *(void **)p = infix_reverse_get_code(reverse_ctx);
         }
     }
     else if (!SvOK(sv) || !SvIV(sv)) {
+        // The user passed undef or 0, so this is a NULL function pointer.
         *(void **)p = nullptr;
     }
     else {
+        // The user passed something other than a coderef or undef.
         croak("Argument for a callback must be a code reference or undef.");
     }
 }
-
 
 XS_INTERNAL(Affix_as_string) {
     dVAR;
