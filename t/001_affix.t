@@ -293,14 +293,14 @@ subtest 'Forward Calls: Comprehensive Pointer Types' => sub {
         ok $check_ptr_ptr->( \$string ), 'Correctly passed a reference to a string as char**';
         is $string, 'C changed me', 'C function was able to modify the inner pointer';
     };
-    subtest 'Struct Pointers (*MyStruct)' => sub {
+    subtest 'Struct Pointers (*@MyStruct)' => sub {
         plan 5;
-        ok typedef('@MyStruct = { id: int32, value: float64, label: *char };'), 'typedef("@MyStruct = ...")';
-        isa_ok my $init_struct = wrap( $lib_path, 'init_struct', '(*@MyStruct, int32, float64, *char)->void' ), ['Affix'];
+        ok typedef('@My::Struct = { id: int32, value: float64, label: *char };'), 'typedef("@My::Struct = ...")';
+        isa_ok my $init_struct = wrap( $lib_path, 'init_struct', '(*@My::Struct, int32, float64, *char)->void' ), ['Affix'];
         my %struct_hash;
         $init_struct->( \%struct_hash, 101, 9.9, "Initialized" );
         is \%struct_hash, { id => 101, value => 9.9, label => "Initialized" }, 'Correctly initialized a Perl hash via a struct pointer';
-        isa_ok my $get_ptr = wrap( $lib_path, 'get_static_struct_ptr', '()->*@MyStruct' ), ['Affix'];
+        isa_ok my $get_ptr = wrap( $lib_path, 'get_static_struct_ptr', '()->*@My::Struct' ), ['Affix'];
         my $struct_ptr = $get_ptr->();
         isa_ok $struct_ptr, ['Affix::Pointer'], 'Receiving a struct pointer returns an Affix::Pointer object';
         is $struct_ptr->deref, { id => 99, value => -1.0, label => 'Global' }, 'Dereferencing a returned struct pointer works';

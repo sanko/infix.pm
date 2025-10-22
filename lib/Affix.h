@@ -14,6 +14,7 @@
 // This ensures all memory is tracked by Perl's memory manager, which is safer and
 // helps with leak detection tools like valgrind.
 #define infix_malloc safemalloc
+#define infix_calloc safecalloc
 #define infix_free safefree
 // This include order is critical. We need Perl's types defined first.
 #include "common/infix_internals.h"
