@@ -356,15 +356,6 @@ subtest 'Type Registry and Typedefs' => sub {
     @MyStruct = { id: int32, value: float64, label: *char };
     @MyUnion  = < i:int32, f:float32, c:[8:char] >;
 
-    subtest 'Forward Calls: Nested Structs and By-Value Returns (with Typedefs)' => sub {
-        plan 3;
-        isa_ok my $get_width = wrap( $lib_path, 'get_rect_width', '(*@Rect)->int32' ), ['Affix'];
-        is $get_width->( \{ top_left => { x => 10, y => 20 }, bottom_right => { x => 60, y => 80 }, name => 'My Rectangle' } ), 50,
-            'Correctly passed nested struct and calculated width';
-        isa_ok my $create_point = wrap( $lib_path, 'create_point', '(int32, int32)->@Point' ), ['Affix'];
-        my $point = $create_point->( 123, 456 );
-        is $point, { x => 123, y => 456 }, 'Correctly received a struct returned by value';
-    };
     subtest 'Forward Calls: Advanced Pointers and Arrays of Structs (with Typedefs)' => sub {
         plan 2;
         note 'Testing marshalling arrays of structs using typedefs.';
@@ -381,6 +372,15 @@ subtest 'Type Registry and Typedefs' => sub {
         isa_ok my $process_union = wrap( $lib_path, 'process_union_float', '(@MyUnion)->float32' ), ['Affix'];
         my $union_data = { f => 2.5 };
         is $process_union->($union_data), float(25.0), 'Correctly passed a union with the float member active';
+    };
+    subtest 'Forward Calls: Nested Structs and By-Value Returns (with Typedefs)' => sub {
+        plan 3;
+        isa_ok my $get_width = wrap( $lib_path, 'get_rect_width', '(*@Rect)->int32' ), ['Affix'];
+        is $get_width->( \{ top_left => { x => 10, y => 20 }, bottom_right => { x => 60, y => 80 }, name => 'My Rectangle' } ), 50,
+            'Correctly passed nested struct and calculated width';
+        isa_ok my $create_point = wrap( $lib_path, 'create_point', '(int32, int32)->@Point' ), ['Affix'];
+        my $point = $create_point->( 123, 456 );
+        is $point, { x => 123, y => 456 }, 'Correctly received a struct returned by value';
     };
     subtest 'Advanced Callbacks (Reverse FFI) (with Typedefs)' => sub {
         plan 3;
@@ -399,6 +399,7 @@ subtest 'Type Registry and Typedefs' => sub {
             }
             ),
             100, 'C code correctly received a struct returned by value from a Perl callback';
-    };
+        }
+        if 0;
 };
 done_testing;

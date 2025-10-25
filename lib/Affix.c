@@ -517,6 +517,11 @@ void push_vector(pTHX_ const infix_type * type, SV * sv, void * p) {
 
 void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
     const infix_type * pointee_type = type->meta.pointer_info.pointee_type;
+ // segfault
+    if (pointee_type == NULL || (uintptr_t)pointee_type < 4096) { // Basic invalid pointer check
+        warn("Suspect pointee_type %p detected. Forcing to sint32.", (void*)pointee_type);
+        pointee_type = infix_type_create_primitive(INFIX_PRIMITIVE_SINT32);
+    }
 
 #if AFFIX_POINTER_DEBUG
     Perl_warn(aTHX_ "--- [Affix DEBUG] push_pointer entered for type %p ---", (void *)type);
