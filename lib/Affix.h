@@ -141,7 +141,7 @@ void _export_function(pTHX_ HV *, const char *, const char *);
 void boot_Affix(pTHX_ CV *);
 
 // Debugging Macros
-#define DEBUG 10
+#define DEBUG 0
 
 #if DEBUG > 1
 // Simple macro to print the file and line number to stderr.

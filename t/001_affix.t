@@ -5,7 +5,7 @@ use Affix               qw[:all];
 use Config;
 #
 #~ Affix::test_internal_lifecycle();
-Affix::test_callback_lifecycle();
+#~ Affix::test_callback_lifecycle();
 $|++;
 
 # This C code will be compiled into a temporary library for many of the tests.
@@ -177,9 +177,11 @@ typedef void (*kitchen_sink_cb)(
     int a, double b, int c, double d, int e, double f, int g, double h,
     const char* i, int* j
 );
-DLLEXPORT void call_kitchen_sink(kitchen_sink_cb cb) {
+DLLEXPORT int call_kitchen_sink(kitchen_sink_cb cb) {
     int j_val = 100;
     cb(1, 2.0, 3, 4.0, 5, 6.0, 7, 8.0, "kitchen sink", &j_val);
+    warn("# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! %d", j_val);
+    return j_val + 1;
 }
 
 /* Functions with many arguments */
@@ -294,8 +296,8 @@ subtest 'Forward Calls: Comprehensive Pointer Types' => sub {
         ok $check_ptr_ptr->( \$string ), 'Correctly passed a reference to a string as char**';
         is $string, 'C changed me', 'C function was able to modify the inner pointer';
     };
-    subtest 'Struct Pointers (*@@My::Struct)' => sub {
-        plan 6;
+    subtest 'Struct Pointers (*@My::Struct)' => sub {
+        plan 5;
         ok typedef('@My::Struct = { id: int32, value: float64, label: *char };'), 'typedef("@My::Struct = ...")';
         isa_ok my $init_struct = wrap( $lib_path, 'init_struct', '(*@My::Struct, int32, float64, *char)->void' ), ['Affix'];
         my %struct_hash;
@@ -303,8 +305,7 @@ subtest 'Forward Calls: Comprehensive Pointer Types' => sub {
         is \%struct_hash, { id => 101, value => 9.9, label => "Initialized" }, 'Correctly initialized a Perl hash via a struct pointer';
         isa_ok my $get_ptr = wrap( $lib_path, 'get_static_struct_ptr', '()->*@My::Struct' ), ['Affix'];
         my $struct_ptr = $get_ptr->();
-        isa_ok $struct_ptr, ['Affix::Pointer'], 'Receiving a struct pointer returns an Affix::Pointer object';
-        is $$struct_ptr, { id => 99, value => -1.0, label => 'Global' }, 'Dereferencing a returned struct pointer works';
+        is $struct_ptr, { id => 99, value => -1.0, label => 'Global' }, 'Dereferencing a returned struct pointer works';
     };
     subtest 'Function Pointers (*(int->int))' => sub {
         plan 3;
@@ -329,24 +330,32 @@ subtest 'Parser Error Reporting' => sub {
     like dies { Affix::sizeof('{int, double') },                         qr[parse signature], 'sizeof() dies on unterminated aggregate';
 };
 subtest '"Kitchen Sink" Callback' => sub {
-    plan 11;
+    plan 12;
     note 'Testing a callback with 10 mixed arguments passed as a direct coderef.';
-    my $cb_sig = '(*((int32, float64, int32, float64, int32, float64, int32, float64, *char, *int32)->void))->void';
+    my $cb_sig = '
+    (
+        *
+            (int32, float64, int32, float64, int32, float64, int32, float64, *char, *int32)->void
+
+    )->int32';
     isa_ok my $harness = wrap( $lib_path, 'call_kitchen_sink', $cb_sig ), ['Affix'];
     my $callback_sub = sub {
         my ( $a, $b, $c, $d, $e, $f, $g, $h, $i, $j_ref ) = @_;
-        is $a,      1,              'Callback arg 1 (int)';
-        is $b,      2.0,            'Callback arg 2 (double)';
-        is $c,      3,              'Callback arg 3 (int)';
-        is $d,      4.0,            'Callback arg 4 (double)';
-        is $e,      5,              'Callback arg 5 (int)';
-        is $f,      6.0,            'Callback arg 6 (double)';
-        is $g,      7,              'Callback arg 7 (int)';
-        is $h,      8.0,            'Callback arg 8 (double)';
-        is $i,      'kitchen sink', 'Callback arg 9 (string)';
-        is $$j_ref, 100,            'Callback arg 10 (int*)';
+        is $a, 1,              'Callback arg 1 (int)';
+        is $b, 2.0,            'Callback arg 2 (double)';
+        is $c, 3,              'Callback arg 3 (int)';
+        is $d, 4.0,            'Callback arg 4 (double)';
+        is $e, 5,              'Callback arg 5 (int)';
+        is $f, 6.0,            'Callback arg 6 (double)';
+        is $g, 7,              'Callback arg 7 (int)';
+        is $h, 8.0,            'Callback arg 8 (double)';
+        is $i, 'kitchen sink', 'Callback arg 9 (string)';
+        use Data::Dump;
+        ddx \@_;
+        is $$j_ref, 100, 'Callback arg 10 (int*)';
+        $$j_ref = 200;
     };
-    $harness->($callback_sub);
+    is $harness->($callback_sub), 201, 'return value';
 };
 subtest 'Type Registry and Typedefs' => sub {
 
@@ -385,7 +394,7 @@ subtest 'Type Registry and Typedefs' => sub {
         is $point, { x => 123, y => 456 }, 'Correctly received a struct returned by value';
     };
     subtest 'Advanced Callbacks (Reverse FFI) (with Typedefs)' => sub {
-        plan 3;
+        plan 4;
         diag 'Testing callbacks that send and receive structs by passing coderefs directly.';
         isa_ok my $harness1 = wrap( $lib_path, 'process_struct_with_cb', '(*@MyStruct, (*(@MyStruct))->float64)->float64' ), ['Affix'];
         my $struct_to_pass = { id => 100, value => 5.5, label => 'Callback Struct' };
