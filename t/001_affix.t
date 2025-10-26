@@ -3,8 +3,9 @@ use blib;
 use Test2::Tools::Affix qw[:all];
 use Affix               qw[:all];
 use Config;
-
-# Ensure output is not buffered, for clear test diagnostics.
+#
+#~ Affix::test_internal_lifecycle();
+Affix::test_callback_lifecycle();
 $|++;
 
 # This C code will be compiled into a temporary library for many of the tests.
@@ -293,7 +294,7 @@ subtest 'Forward Calls: Comprehensive Pointer Types' => sub {
         ok $check_ptr_ptr->( \$string ), 'Correctly passed a reference to a string as char**';
         is $string, 'C changed me', 'C function was able to modify the inner pointer';
     };
-    subtest 'Struct Pointers (*@MyStruct)' => sub {
+    subtest 'Struct Pointers (*@@My::Struct)' => sub {
         plan 6;
         ok typedef('@My::Struct = { id: int32, value: float64, label: *char };'), 'typedef("@My::Struct = ...")';
         isa_ok my $init_struct = wrap( $lib_path, 'init_struct', '(*@My::Struct, int32, float64, *char)->void' ), ['Affix'];
@@ -348,7 +349,8 @@ subtest '"Kitchen Sink" Callback' => sub {
     $harness->($callback_sub);
 };
 subtest 'Type Registry and Typedefs' => sub {
-    plan 5;
+
+    #~ plan 5;
     note 'Defining named types for subsequent tests.';
     ok typedef(<<''), 'Successfully defined multiple types using typedef';
     @Point    = { x: int32, y: int32 };
@@ -374,7 +376,7 @@ subtest 'Type Registry and Typedefs' => sub {
         is $process_union->($union_data), float(25.0), 'Correctly passed a union with the float member active';
     };
     subtest 'Forward Calls: Nested Structs and By-Value Returns (with Typedefs)' => sub {
-        plan 3;
+        plan 4;
         isa_ok my $get_width = wrap( $lib_path, 'get_rect_width', '(*@Rect)->int32' ), ['Affix'];
         is $get_width->( \{ top_left => { x => 10, y => 20 }, bottom_right => { x => 60, y => 80 }, name => 'My Rectangle' } ), 50,
             'Correctly passed nested struct and calculated width';
@@ -391,7 +393,7 @@ subtest 'Type Registry and Typedefs' => sub {
             return $struct_ref->{value} * 2;
         };
         is $harness1->( $struct_to_pass, $cb1 ), 11.0, 'Callback coderef received struct pointer and returned correct value';
-        isa_ok my $harness2 = wrap( $lib_path, 'check_returned_struct_from_cb', '( (*())->@Point )->int32' ), ['Affix'];
+        isa_ok my $harness2 = wrap( $lib_path, 'check_returned_struct_from_cb', '( *(()->void)->@Point )->int32' ), ['Affix'];
         is $harness2->(
             sub {
                 diag "Inside callback that will return a struct";
@@ -399,7 +401,6 @@ subtest 'Type Registry and Typedefs' => sub {
             }
             ),
             100, 'C code correctly received a struct returned by value from a Perl callback';
-        }
-        if 0;
+    };
 };
 done_testing;

@@ -11,6 +11,198 @@ SV * pull_enum(pTHX_ const infix_type * type, void * p);
 SV * pull_complex(pTHX_ const infix_type * type, void * p);
 SV * pull_vector(pTHX_ const infix_type * type, void * p);
 
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// START: Self-Contained Test for Internal Lifecycle
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+// Native C structs needed for the isolated tests.
+typedef struct {
+    int x;
+    int y;
+} C_Point;
+
+typedef struct {
+    C_Point top_left;
+    C_Point bottom_right;
+    const char * name;
+} C_Rectangle;
+
+typedef struct {
+    int32_t id;
+    double value;
+    const char * label;
+} C_MyStruct;
+
+
+// The simple C function that our isolated forward-call test will call.
+int internal_test_rect_processor(C_Rectangle r) {
+    warn(" [FORWARD TEST] C function received Rectangle { tl:{x:%d, y:%d}, br:{x:%d, y:%d}, name:\"%s\" }",
+         r.top_left.x,
+         r.top_left.y,
+         r.bottom_right.x,
+         r.bottom_right.y,
+         r.name ? r.name : "NULL");
+    return r.bottom_right.x - r.top_left.x;
+}
+
+// The simple C function that will act as the handler for our isolated callback test.
+double internal_test_struct_handler(C_MyStruct * s) {
+    warn(" [CALLBACK TEST] C handler received MyStruct* %p -> { id:%d, value:%f, label:\"%s\" }",
+         (void *)s,
+         s->id,
+         s->value,
+         s->label);
+    return s->value * 2.0;
+}
+
+
+XS_INTERNAL(Affix_test_internal_lifecycle) {
+    dXSARGS;
+    PERL_UNUSED_VAR(items);
+
+    warn("--- [FORWARD LIFECYCLE TEST] START ---");
+
+    infix_registry_t * registry = infix_registry_create();
+    if (!registry) {
+        infix_error_details_t err = infix_get_last_error();
+        croak("Lifecycle test failed: could not create registry: %s", err.message);
+    }
+
+    const char * defs =
+        "@Point = { x: int32, y: int32 }; @Rect = { top_left: @Point, bottom_right: @Point, name: *char };";
+    if (infix_register_types(registry, defs) != INFIX_SUCCESS) {
+        infix_error_details_t err = infix_get_last_error();
+        infix_registry_destroy(registry);
+        croak("Lifecycle test failed: could not register types: %s", err.message);
+    }
+    warn(" [FORWARD TEST] Step 1: Registry and types created.");
+
+    infix_forward_t * trampoline = NULL;
+    const char * signature = "(@Rect)->int32";
+    if (infix_forward_create(&trampoline, signature, (void *)internal_test_rect_processor, registry) != INFIX_SUCCESS) {
+        infix_error_details_t err = infix_get_last_error();
+        infix_registry_destroy(registry);
+        croak("Lifecycle test failed: could not create trampoline: %s", err.message);
+    }
+    warn(" [FORWARD TEST] Step 2: Forward trampoline created for signature '%s'.", signature);
+
+    HV * rect_hv = newHV();
+    HV * tl_hv = newHV();
+    hv_stores(tl_hv, "x", newSViv(10));
+    hv_stores(tl_hv, "y", newSViv(20));
+    HV * br_hv = newHV();
+    hv_stores(br_hv, "x", newSViv(60));
+    hv_stores(br_hv, "y", newSViv(80));
+
+    hv_stores(rect_hv, "top_left", newRV_noinc(MUTABLE_SV(tl_hv)));
+    hv_stores(rect_hv, "bottom_right", newRV_noinc(MUTABLE_SV(br_hv)));
+    hv_stores(rect_hv, "name", newSVpv("Test Rect", 0));
+
+    SV * rect_sv_ref = newRV_noinc(MUTABLE_SV(rect_hv));
+    warn(" [FORWARD TEST] Step 3: Perl HV created in C.");
+
+    const infix_type * rect_type = infix_registry_lookup_type(registry, "Rect");
+    if (!rect_type) {
+        infix_registry_destroy(registry);
+        croak("Lifecycle test failed: could not look up @Rect type");
+    }
+
+    size_t rect_size = infix_type_get_size(rect_type);
+    void * c_rect = safemalloc(rect_size);
+    sv2ptr(aTHX_ rect_sv_ref, c_rect, rect_type);
+    warn(" [FORWARD TEST] Step 4: Marshalled Perl HV to C struct at %p.", c_rect);
+
+    infix_cif_func cif = infix_forward_get_code(trampoline);
+    void * args[] = {c_rect};
+    int result = 0;
+
+    warn(" [FORWARD TEST] Step 5: Calling trampoline...");
+    cif(&result, args);
+    warn(" [FORWARD TEST] Step 6: Trampoline returned result: %d.", result);
+
+    safefree(c_rect);
+    SvREFCNT_dec(rect_sv_ref);
+    infix_forward_destroy(trampoline);
+    infix_registry_destroy(registry);
+    warn(" [FORWARD TEST] Step 7: All C resources cleaned up.");
+    warn("--- [FORWARD LIFECYCLE TEST] END ---");
+
+    ST(0) = sv_2mortal(newSVbool(result == 50));
+    XSRETURN(1);
+}
+
+XS_INTERNAL(Affix_test_callback_lifecycle) {
+    dXSARGS;
+    PERL_UNUSED_VAR(items);
+    warn("--- [CALLBACK LIFECYCLE TEST] START ---");
+
+    // 1. Setup registry and types, just like the failing test case.
+    infix_registry_t * registry = infix_registry_create();
+    if (!registry)
+        croak("Callback test failed: could not create registry");
+
+    const char * defs = "@MyStruct = { id: int32, value: float64, label: *char };";
+    if (infix_register_types(registry, defs) != INFIX_SUCCESS) {
+        infix_error_details_t err = infix_get_last_error();
+        infix_registry_destroy(registry);
+        croak("Callback test failed: could not register types: %s", err.message);
+    }
+    warn(" [CALLBACK TEST] Step 1: Registry and @MyStruct type created.");
+
+    // 2. Parse the problematic callback signature.
+    const char * callback_sig = "(*(@MyStruct))->float64";
+    infix_arena_t * sig_arena = NULL;
+    infix_type * func_ptr_type = NULL;
+    if (infix_type_from_signature(&func_ptr_type, &sig_arena, callback_sig, registry) != INFIX_SUCCESS) {
+        infix_error_details_t err = infix_get_last_error();
+        infix_registry_destroy(registry);
+        croak("Callback test failed: could not parse signature '%s': %s", callback_sig, err.message);
+    }
+    warn(" [CALLBACK TEST] Step 2: Parsed callback signature successfully.");
+
+    // 3. Create the reverse trampoline (callback). This is where the crash occurred.
+    infix_reverse_t * reverse_ctx = NULL;
+    infix_type * ret_type = func_ptr_type->meta.func_ptr_info.return_type;
+    infix_type ** arg_types = &func_ptr_type->meta.func_ptr_info.args[0].type;
+    size_t num_args = func_ptr_type->meta.func_ptr_info.num_args;
+
+    if (infix_reverse_create_callback_manual(
+            &reverse_ctx, ret_type, arg_types, num_args, num_args, (void *)internal_test_struct_handler) !=
+        INFIX_SUCCESS) {
+        infix_error_details_t err = infix_get_last_error();
+        infix_arena_destroy(sig_arena);
+        infix_registry_destroy(registry);
+        croak("Callback test failed: could not create reverse trampoline: %s", err.message);
+    }
+    warn(" [CALLBACK TEST] Step 3: Created reverse trampoline (callback) successfully.");
+
+    // 4. Get the generated function pointer and call it.
+    typedef double (*test_cb_t)(C_MyStruct *);
+    test_cb_t generated_func = (test_cb_t)infix_reverse_get_code(reverse_ctx);
+    if (!generated_func)
+        croak("Callback test failed: generated function pointer is NULL");
+
+    C_MyStruct test_struct = {123, 7.5, "Hello from C test"};
+    warn(" [CALLBACK TEST] Step 4: Calling generated callback with struct { id:123, value:7.5, ... }");
+    double result = generated_func(&test_struct);
+    warn(" [CALLBACK TEST] Step 5: Callback returned %f.", result);
+
+    // 5. Cleanup.
+    infix_reverse_destroy(reverse_ctx);
+    infix_arena_destroy(sig_arena);
+    infix_registry_destroy(registry);
+    warn(" [CALLBACK TEST] Step 6: All resources cleaned up.");
+    warn("--- [CALLBACK LIFECYCLE TEST] END ---");
+
+    ST(0) = sv_2mortal(newSVbool(result == 15.0));
+    XSRETURN(1);
+}
+
+
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// END: Self-Contained Test for Internal Lifecycle
+// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
 // Helper function to create rich, compiler-style error messages for the parser.
 static SV * _format_parse_error(pTHX_ const char * context_msg, const char * signature, infix_error_details_t err) {
     STRLEN sig_len = strlen(signature);
@@ -158,9 +350,12 @@ Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv) {
     }
 
     if (SvROK(sv) && sv_isobject(sv) && sv_derived_from(sv, "Affix::Pin")) {
-        MAGIC * mg = mg_find(SvRV(sv), PERL_MAGIC_ext);
-        if (mg && mg->mg_virtual == &Affix_pin_vtbl)
-            return (Affix_Pin *)mg->mg_ptr;
+        SV * rsv = SvRV(sv);
+        if (SvMAGICAL(rsv)) {
+            MAGIC * mg = mg_findext(rsv, PERL_MAGIC_ext, &Affix_pin_vtbl);
+            if (mg)
+                return (Affix_Pin *)mg->mg_ptr;
+        }
     }
     return nullptr;
 }
@@ -175,15 +370,20 @@ int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg) {
         return 0;
 
 #if AFFIX_PIN_DEBUG
-    Perl_warn(aTHX_ "[Affix DEBUG] Affix_free_pin called for SV %p. Pin holds C ptr %p. Managed: %d",
-              (void *)sv,
-              pin->pointer,
-              (int)pin->managed);
+    char type_sig_buffer[512] = "???";
+    if (pin->type) {
+        (void)infix_type_print(type_sig_buffer, sizeof(type_sig_buffer), pin->type, INFIX_DIALECT_SIGNATURE);
+    }
+    warn(" [Affix DEBUG] Affix_free_pin called for SV %p. Pin holds C ptr %p (type: %s). Managed: %d",
+         (void *)sv,
+         pin->pointer,
+         type_sig_buffer,
+         (int)pin->managed);
 #endif
 
     if (pin->managed && pin->pointer) {
 #if AFFIX_PIN_DEBUG
-        Perl_warn(aTHX_ "[Affix DEBUG] -> This is a MANAGED pin. Freeing C ptr %p now.", pin->pointer);
+        warn(" [Affix DEBUG] -> This is a MANAGED pin. Freeing C ptr %p now.", pin->pointer);
 #endif
         safefree(pin->pointer);
     }
@@ -201,6 +401,15 @@ int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg) {
         sv_setsv_mg(sv, &PL_sv_undef);
         return 0;
     }
+
+#if AFFIX_PIN_DEBUG
+    char type_sig_buffer[512] = "???";
+    (void)infix_type_print(type_sig_buffer, sizeof(type_sig_buffer), pin->type, INFIX_DIALECT_SIGNATURE);
+    warn(" [Affix DEBUG] Affix_get_pin (dereference): Pin holds C ptr %p with type '%s'.",
+         pin->pointer,
+         type_sig_buffer);
+#endif
+
     ptr2sv(aTHX_ pin->pointer, sv, pin->type);
     return 0;
 }
@@ -232,6 +441,10 @@ void _pin_sv(pTHX_ SV * sv, const infix_type * type, void * pointer, bool manage
         if (pin && pin->managed && pin->pointer) {
             safefree(pin->pointer);
         }
+        if (pin && pin->type_arena) {
+            infix_arena_destroy(pin->type_arena);
+            pin->type_arena = nullptr;
+        }
     }
     else {
         Newxz(pin, 1, Affix_Pin);
@@ -240,9 +453,28 @@ void _pin_sv(pTHX_ SV * sv, const infix_type * type, void * pointer, bool manage
     }
 
     pin->pointer = pointer;
-    pin->type = type;
     pin->managed = managed;
-    pin->type_arena = nullptr;
+
+    pin->type_arena = infix_arena_create(2048);
+    if (!pin->type_arena) {
+        safefree(pin);
+        mg->mg_ptr = nullptr;
+        croak("Failed to create memory arena for pin's type information");
+    }
+
+#if AFFIX_PIN_DEBUG
+    char type_sig_buffer[512];
+    (void)infix_type_print(type_sig_buffer, sizeof(type_sig_buffer), type, INFIX_DIALECT_SIGNATURE);
+    warn(" [Affix DEBUG] _pin_sv: Copying type '%s' into pin's private arena.", type_sig_buffer);
+#endif
+
+    pin->type = _copy_type_graph_to_arena(pin->type_arena, type);
+    if (!pin->type) {
+        infix_arena_destroy(pin->type_arena);
+        safefree(pin);
+        mg->mg_ptr = nullptr;
+        croak("Failed to copy type information into pin");
+    }
 }
 
 XS_INTERNAL(Affix_find_symbol) {
@@ -260,19 +492,27 @@ XS_INTERNAL(Affix_find_symbol) {
         Newxz(pin, 1, Affix_Pin);
         pin->pointer = symbol;
         pin->managed = false;
+
         pin->type_arena = infix_arena_create(256);
-        infix_type * void_ptr_type = nullptr;
-        if (infix_type_create_pointer_to(pin->type_arena, &void_ptr_type, infix_type_create_void()) != INFIX_SUCCESS) {
+        if (!pin->type_arena) {
             safefree(pin);
+            croak("Failed to create memory arena for pin's type information");
+        }
+
+        const infix_type * void_ptr_type = infix_type_create_pointer();
+        pin->type = _copy_type_graph_to_arena(pin->type_arena, void_ptr_type);
+        if (!pin->type) {
             infix_arena_destroy(pin->type_arena);
+            safefree(pin);
             croak("Internal error: Failed to create pointer type for pin");
         }
-        pin->type = void_ptr_type;
+
         SV * obj_data = newSV(0);
         sv_setiv(obj_data, PTR2IV(pin));
         SV * rv = newRV_inc(obj_data);
         sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
         sv_magicext(obj_data, nullptr, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
+
         ST(0) = sv_2mortal(rv);
         XSRETURN(1);
     }
@@ -309,15 +549,9 @@ XS_INTERNAL(Affix_pin) {
         croak_sv(_format_parse_error(aTHX_ "for pin", signature, err));
     }
 
-    Affix_Pin * pin;
-    Newxz(pin, 1, Affix_Pin);
-    pin->pointer = ptr;
-    pin->managed = false;
-    pin->type = type;
-    pin->type_arena = arena;
+    _pin_sv(aTHX_ target_sv, type, ptr, false);
 
-    MAGIC * mg = sv_magicext(target_sv, nullptr, PERL_MAGIC_ext, &Affix_pin_vtbl, nullptr, 0);
-    mg->mg_ptr = (char *)pin;
+    infix_arena_destroy(arena);
 
     XSRETURN_YES;
 }
@@ -512,19 +746,16 @@ void push_vector(pTHX_ const infix_type * type, SV * sv, void * p) {
         }
     }
 }
-// Toggle this to enable/disable detailed debug tracing for this fix
-#define AFFIX_POINTER_DEBUG 1
-
 void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
     const infix_type * pointee_type = type->meta.pointer_info.pointee_type;
- // segfault
-    if (pointee_type == NULL || (uintptr_t)pointee_type < 4096) { // Basic invalid pointer check
-        warn("Suspect pointee_type %p detected. Forcing to sint32.", (void*)pointee_type);
-        pointee_type = infix_type_create_primitive(INFIX_PRIMITIVE_SINT32);
+    if (pointee_type == NULL) {
+        croak("Internal error in push_pointer: pointee_type is NULL. This indicates a memory lifecycle issue.");
     }
 
-#if AFFIX_POINTER_DEBUG
-    Perl_warn(aTHX_ "--- [Affix DEBUG] push_pointer entered for type %p ---", (void *)type);
+#if AFFIX_PIN_DEBUG
+    char type_sig_buffer[512];
+    (void)infix_type_print(type_sig_buffer, sizeof(type_sig_buffer), type, INFIX_DIALECT_SIGNATURE);
+    warn(" --- [Affix DEBUG] push_pointer entered for type '%s' ---", type_sig_buffer);
     sv_dump(sv);
 #endif
 
@@ -536,9 +767,8 @@ void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
     if (SvROK(sv)) {
         SV * const rv = SvRV(sv);
 
-#if AFFIX_POINTER_DEBUG
-        Perl_warn(
-            aTHX_ "[Affix DEBUG] Marshalling a REFERENCE. Ref SV is %p, Pointee SV is %p.", (void *)sv, (void *)rv);
+#if AFFIX_PIN_DEBUG
+        warn(" [Affix DEBUG] Marshalling a REFERENCE. Ref SV is %p, Pointee SV is %p.", (void *)sv, (void *)rv);
 #endif
 
         if (SvTYPE(rv) == SVt_PVAV) {
@@ -551,10 +781,10 @@ void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
                 if (elem_sv_ptr)
                     sv2ptr(aTHX_ * elem_sv_ptr, c_array + (i * element_size), pointee_type);
             }
-#if AFFIX_POINTER_DEBUG
-            Perl_warn(aTHX_ "[Affix DEBUG] Pinning C array %p to underlying ARRAY %p.", (void *)c_array, (void *)rv);
+#if AFFIX_PIN_DEBUG
+            warn(" [Affix DEBUG] Pinning C array %p to underlying ARRAY %p.", (void *)c_array, (void *)rv);
 #endif
-            _pin_sv(aTHX_ rv, type, c_array, true);
+            _pin_sv(aTHX_ rv, pointee_type, c_array, true);
             *(void **)ptr = c_array;
             return;
         }
@@ -587,26 +817,23 @@ void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
 
         SV * sv_to_marshal;
         if (SvTYPE(rv) == SVt_PVHV) {
-#if AFFIX_POINTER_DEBUG
-            Perl_warn(aTHX_ "[Affix DEBUG] Pointee is a HASH. Marshaller needs the reference SV (%p).", (void *)sv);
+#if AFFIX_PIN_DEBUG
+            warn(" [Affix DEBUG] Pointee is a HASH. Marshaller needs the reference SV (%p).", (void *)sv);
 #endif
-            sv_to_marshal = sv;  // Struct/union marshallers expect the reference
+            sv_to_marshal = sv;
         }
         else {
-#if AFFIX_POINTER_DEBUG
-            Perl_warn(aTHX_ "[Affix DEBUG] Pointee is a SCALAR. Marshaller needs the de-referenced SV (%p).",
-                      (void *)rv);
+#if AFFIX_PIN_DEBUG
+            warn(" [Affix DEBUG] Pointee is a SCALAR. Marshaller needs the de-referenced SV (%p).", (void *)rv);
 #endif
-            sv_to_marshal = rv;  // Simple scalar marshallers expect the value
+            sv_to_marshal = rv;
         }
         sv2ptr(aTHX_ sv_to_marshal, dest_c_ptr, copy_type);
 
-        // ** THE SURGICAL FIX **
         // The owning pin MUST be attached to the persistent, underlying variable (rv),
         // not the temporary reference that might have been passed on the stack (sv).
-#if AFFIX_POINTER_DEBUG
-        Perl_warn(
-            aTHX_ "[Affix DEBUG] Attaching OWNING pin for C ptr %p to the UNDERLYING SV %p.", dest_c_ptr, (void *)rv);
+#if AFFIX_PIN_DEBUG
+        warn(" [Affix DEBUG] Attaching OWNING pin for C ptr %p to the UNDERLYING SV %p.", dest_c_ptr, (void *)rv);
 #endif
         _pin_sv(aTHX_ rv, copy_type, dest_c_ptr, true);
 
@@ -691,8 +918,7 @@ SV * pull_struct(pTHX_ const infix_type * type, void * p) {
             SV * member_sv = newSV(0);
             // Pin this new scalar directly to the C memory of the struct member.
             // This makes the hash a "live view" of the C data.
-            _pin_sv(
-                aTHX_ member_sv, member->type, member_ptr, false);  // 'false' because Perl doesn't own this C memory.
+            _pin_sv(aTHX_ member_sv, member->type, member_ptr, false);
 
             hv_store(hv, member->name, strlen(member->name), member_sv, 0);
         }
@@ -770,20 +996,36 @@ SV * pull_vector(pTHX_ const infix_type * type, void * p) {
 SV * pull_pointer(pTHX_ const infix_type * type, void * ptr) {
     void * c_ptr = *(void **)ptr;
 
-    if (c_ptr == NULL) {
+    if (c_ptr == NULL)
         return newSV(0);
-    }
 
-    if (type->meta.pointer_info.pointee_type->category == INFIX_TYPE_PRIMITIVE &&
-        type->meta.pointer_info.pointee_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8)
+    const infix_type * pointee_type = type->meta.pointer_info.pointee_type;
+    if (pointee_type->category == INFIX_TYPE_PRIMITIVE && pointee_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8)
         return newSVpv((const char *)c_ptr, 0);
 
     Affix_Pin * pin;
     Newxz(pin, 1, Affix_Pin);
     pin->pointer = c_ptr;
     pin->managed = false;
-    pin->type = type->meta.pointer_info.pointee_type;
-    pin->type_arena = nullptr;
+
+    pin->type_arena = infix_arena_create(2048);
+    if (!pin->type_arena) {
+        safefree(pin);
+        croak("Failed to create memory arena for pin's type information");
+    }
+
+#if AFFIX_PIN_DEBUG
+    char type_sig_buffer[512];
+    (void)infix_type_print(type_sig_buffer, sizeof(type_sig_buffer), pointee_type, INFIX_DIALECT_SIGNATURE);
+    warn(" [Affix DEBUG] pull_pointer: Creating pin for returned pointer. Pointee type is '%s'.", type_sig_buffer);
+#endif
+
+    pin->type = _copy_type_graph_to_arena(pin->type_arena, pointee_type);
+    if (!pin->type) {
+        infix_arena_destroy(pin->type_arena);
+        safefree(pin);
+        croak("Failed to copy type information for returned pointer");
+    }
 
     SV * obj_data = newSV(0);
     sv_setiv(obj_data, PTR2IV(pin));
@@ -1202,6 +1444,7 @@ int Affix_free_implicit_callback(pTHX_ SV * sv, MAGIC * mg) {
         if (magic_data->reverse_ctx) {
             infix_reverse_destroy(magic_data->reverse_ctx);
         }
+
         Safefree(magic_data);
     }
     mg->mg_ptr = nullptr;
@@ -1230,33 +1473,28 @@ void push_reverse_trampoline(pTHX_ const infix_type * type, SV * sv, void * p) {
             // We extract the signature components directly from the parsed type object.
             infix_type * ret_type = type->meta.func_ptr_info.return_type;
             size_t num_args = type->meta.func_ptr_info.num_args;
-            size_t num_fixed_args = type->meta.func_ptr_info.num_fixed_args;
-            infix_type ** arg_types;
-            Newx(arg_types, num_args, infix_type *);
-            for (size_t i = 0; i < num_args; ++i) {
-                arg_types[i] = type->meta.func_ptr_info.args[i].type;
-            }
+
+            // We must pass a pointer into the existing array of structs, not a new
+            // array of pointers. The infix library expects to iterate this with
+            // the stride of the larger infix_function_argument struct.
+            infix_type ** arg_types = &type->meta.func_ptr_info.args[0].type;
 
             infix_reverse_t * reverse_ctx = nullptr;
-            infix_status status = infix_reverse_create_closure_manual(&reverse_ctx,
-                                                                      ret_type,
-                                                                      arg_types,
-                                                                      num_args,
-                                                                      num_fixed_args,
-                                                                      (void *)_affix_callback_handler_entry,
-                                                                      (void *)cb_data);
-
-            // The temporary array of argument types is no longer needed.
-            Safefree(arg_types);
+            infix_status status = infix_reverse_create_closure_manual(
+                &reverse_ctx,
+                ret_type,
+                arg_types,
+                num_args,
+                num_args,  // For closures, all args are "fixed" from C's perspective
+                (void *)_affix_callback_handler_entry,
+                (void *)cb_data);
 
             if (status != INFIX_SUCCESS) {
-                // If creation fails, we clean up and generate a detailed error message.
                 SvREFCNT_dec(cb_data->perl_sub);
                 Safefree(cb_data);
-
-                // We still serialize the signature here, but ONLY for the error message.
                 char signature_buf[256];
-                infix_type_print(signature_buf, sizeof(signature_buf), (infix_type *)type, INFIX_DIALECT_SIGNATURE);
+                (void)infix_type_print(
+                    signature_buf, sizeof(signature_buf), (infix_type *)type, INFIX_DIALECT_SIGNATURE);
                 infix_error_details_t err = infix_get_last_error();
                 croak_sv(_format_parse_error(aTHX_ "for callback", signature_buf, err));
             }
@@ -1482,6 +1720,10 @@ void boot_Affix(pTHX_ CV * cv) {
     export_function("Affix", "find_symbol", "lib");
     export_function("Affix", "get_last_error_message", "core");
     export_function("Affix", "typedef", "registry");
+
+    newXS("Affix::test_internal_lifecycle", Affix_test_internal_lifecycle, __FILE__);
+    newXS("Affix::test_callback_lifecycle", Affix_test_callback_lifecycle, __FILE__);
+
 
     // Debugging
     (void)newXSproto_portable("Affix::sv_dump", Affix_sv_dump, __FILE__, "$");
