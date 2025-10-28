@@ -1,4 +1,5 @@
 use v5.40;
+use lib '../lib', 'lib';
 use blib;
 use Test2::Tools::Affix qw[:all];
 use Affix               qw[:all];
@@ -7,6 +8,62 @@ use Config;
 #~ Affix::test_internal_lifecycle();
 #~ Affix::test_callback_lifecycle();
 $|++;
+#
+subtest import => sub {
+    imported_ok qw[affix wrap pin unpin];
+    imported_ok qw[libm libc];
+};
+subtest types => sub {
+    imported_ok qw[
+        Void Bool Char UChar Short UShort Int UInt Long ULong LongLong ULongLong Float Double LongDouble
+        Size_t
+        String WString StdString
+        Pointer
+        SV
+        Const
+        SChar WChar
+        sint8
+    ];
+    subtest abstract => sub {
+        is Void,       'void',       'Void';
+        is Bool,       'bool',       'Bool';
+        is Char,       'char',       'Char';
+        is UChar,      'uchar',      'UChar';
+        is Short,      'short',      'Short';
+        is UShort,     'ushort',     'UShort';
+        is Int,        'int',        'Int';
+        is UInt,       'uint',       'UInt';
+        is Long,       'long',       'Long';
+        is ULong,      'ulong',      'ULong';
+        is LongLong,   'longlong',   'LongLong';
+        is ULongLong,  'ulonglong',  'ULongLong';
+        is Float,      'float',      'Float';
+        is Double,     'double',     'Double';
+        is LongDouble, 'longdouble', 'LongDouble';
+        is SChar,      'sint8',      'SChar';
+    };
+    subtest explicit => sub {
+        is sint8, 'sint8', 'sint8';
+    };
+    subtest SIMD => sub {
+        skip_all 'TODO';
+    };
+    subtest composite => sub {
+        is Pointer [Void],             '*void',  'Pointer[Void]';
+        is Pointer [Char],             '*char',  'Pointer[Char]';
+        is Pointer [ Pointer [Void] ], '**void', 'Pointer[Pointer[Void]]';
+        #
+        is Struct [ name => Pointer [Char] ], '{ name: *char }', 'Struct[ name => ... ]';
+        is Struct [ name => Pointer [Char], dob => Struct [ y => Int, m => Int, d => Int ] ], '{ name: *char, dob: { y: int, m: int, d: int } }',
+            'Struct[ name => ..., dob => ...]';
+        #
+        is Union [ i => Int, f => Float ], '< i: int, f: float >', 'Union[...]';
+        #
+    };
+
+    #~ use Data::Dump;
+    #~ ddx [ Int, Void, Pointer [Int], Int ];
+};
 
 # This C code will be compiled into a temporary library for many of the tests.
 my $C_CODE = <<'END_C';

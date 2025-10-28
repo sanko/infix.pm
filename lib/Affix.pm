@@ -4,12 +4,19 @@ package Affix 1.00 {    # 'FFI' is my middle name!
     #~ D|--------------------------4---5~---|--4--------------------------------||
     #~ A|--7~\-----4---44-/777--------------|------7/4~-------------------------||
     #~ E|-----------------------------------|-----------------------------------||
-    use v5.32;
+    use v5.40;
     use Carp               qw[];
     use vars               qw[@EXPORT_OK @EXPORT %EXPORT_TAGS];
     use warnings::register qw[Type];
+    #
+    use Affix::Type          qw[:all];
+    use Affix::Type::CodeRef qw[:all];
+    use Affix::Type::Enum    qw[:all];
+    use Affix::Type::Struct  qw[:all];
+    use Affix::Type::Union   qw[:all];
+    #
     my $okay = 0;
-
+    #
     BEGIN {
         use XSLoader;
         $DynaLoad::dl_debug = 1;
@@ -35,9 +42,13 @@ package Affix 1.00 {    # 'FFI' is my middle name!
             malloc calloc realloc free
             memchr memcmp memset memcpy memmove
             sizeof offsetof alignof
-            raw hexdump]
+            raw hexdump],
     ];
-    $EXPORT_TAGS{lib} = [qw[load_library find_library find_symbol dlerror libm libc]];
+    $EXPORT_TAGS{lib}   = [qw[load_library find_library find_symbol dlerror libm libc]];
+    $EXPORT_TAGS{types} = [
+        @Affix::Type::EXPORT_OK,         @Affix::Type::CodeRef::EXPORT_OK, @Affix::Type::Enum::EXPORT_OK,
+        @Affix::Type::Struct::EXPORT_OK, @Affix::Type::Union::EXPORT_OK
+    ];
     {
         my %seen;
         push @{ $EXPORT_TAGS{default} }, grep { !$seen{$_}++ } @{ $EXPORT_TAGS{$_} } for qw[core types cc lib];

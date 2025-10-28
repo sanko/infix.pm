@@ -23,7 +23,7 @@ package Test2::Tools::Affix 0.09 {
                 U D T F DNE array string float number bool hash etc end
                 refcount
                 can_ok isa_ok
-                capture]
+                capture imported_ok]
         ]
     );
     #
