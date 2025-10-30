@@ -23,23 +23,21 @@ class    #
     field $force : param //= 0;
     field $debug : param = 0;
     field $libver;
-    field $cflags = $^O =~ /bsd/ ? '' : '-fPIC ' . (
-        $debug > 0 ?
+    field $cflags
+        = $^O =~ /bsd/ ? '' :
+        '-fPIC ' .
+        ( $debug > 0 ?
             '-DDEBUG=' .
             $debug .
             ' -g3 -pthread -gdwarf-4 -fPIC ' .
             ' -Wno-deprecated -pipe ' .
             ' -Wall -Wextra -Wpedantic -Wvla -Wnull-dereference ' .
             ' -Wswitch-enum  -Wduplicated-cond ' .
-            ' -Wduplicated-branches'
-
-        # .
-        # ( $Config{osname} eq 'darwin' ? '' : ' -fvar-tracking-assignments' )
-        :
-
-            # $Config{osname} eq 'MSWin32' ? '' :
+            ' -Wduplicated-branches' .
+            ( $Config{osname} eq 'darwin' ? '' : ' -fvar-tracking-assignments' ) :
+            $Config{osname} eq 'MSWin32' ? '' :
             ' -DNDEBUG -DBOOST_DISABLE_ASSERTS -Ofast -fPIC -ftree-vectorize -ffast-math -fno-align-functions -fno-align-loops -fno-omit-frame-pointer -flto'
-    );
+        );
     field $ldflags = $^O =~ /bsd/ ? '' : ' -flto ';
     field $cppver  = 'c++17';                         # https://en.wikipedia.org/wiki/C%2B%2B20#Compiler_support
     field $cver    = 'c17';                           # https://en.wikipedia.org/wiki/C17_(C_standard_revision)

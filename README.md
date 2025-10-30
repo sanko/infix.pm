@@ -10,13 +10,22 @@ use Affix qw[:all];
 # bind to exported function
 affix libm, 'floor', [Double], Double;
 warn floor(3.14159);    # 3
+warn floor(3.99999);    # 3 
 
 # wrap an exported function in a code reference
-my $getpid = wrap libc, 'getpid', [], Int;    # '_getpid' on Win32
-warn $getpid->();                             # $$
+my $getpid = wrap libc, 'getpid', [], Int;   # '_getpid' on Win32  
+warn $getpid->();                            # $$
+warn getpid();                               # $$
+
+# bind to an exported function with a different name
+affix libc, ['getpid', 'get_process_id'], [], Int;
+warn get_process_id();                       # $$
 
 # bind an exported value to a Perl value
 pin( my $ver, 'libfoo', 'VERSION', Int );
+warn "Foo version: $ver";                     # Foo version: 1
+$ver = 2;                                     # change the version
+warn "Foo version: $ver";                     # Foo version: 2
 ```
 
 # DESCRIPTION
@@ -37,7 +46,7 @@ Affix includes the following features right out of the box:
 - Aggregates such as structs, unions, and arrays
 - Passing aggregates by value on many platforms
 - Nested aggregates
-- 'Smart' [enums](https://metacpan.org/pod/Affix%3A%3AEnum)
+- 'Smart' [enums](#enumerations) that can be used as types
 - Tested to work all the way down to Perl 5.026 (which is ancient in my book)
 
 # The Basics
@@ -57,7 +66,7 @@ affix libc, 'puts', [Str], Int;
 puts( 'Hello' );
 
 affix './mylib.dll', ['output', 'write'], [Str], Int; # renamed function
-write( 'Hello' );
+write( 'Hello' );    
 
 affix undef, [ 'rint', 'round' ], [Double], Double; # use current process
 warn round(3.14);
@@ -73,19 +82,47 @@ Expected parameters include:
     File path or name of the library to load symbols from. Pass an explicit `undef` to pull functions from the main
     executable.
 
+    If you pass a list reference, Affix will try to load the library with the given name and version. For example,
+    `affix ['foo', v1.2.3], ...` will try to load `libfoo.so.1.2.3` on Unix, `libfoo.dylib` on macOS, and
+    `foo.dll` on Windows. This is useful for libraries that provide versioned symbols.
+
+    If you pass a string, Affix will try to load the library with the given name. For example, `affix 'foo', ...`
+    will try to load `libfoo.so` on Unix, `libfoo.dylib` on macOS, and `foo.dll` on Windows. This is useful for
+    libraries that do not provide versioned symbols or when you want to load the latest version of the library.     
+
 - `symbol_name` - required
 
     Name of the symbol to wrap.
 
-    Optionally, you may provide an array reference with the symbol's name and the name of the wrapping subroutine.
+    If you pass a string, Affix will try to load the symbol with the given name. For example, `affix libm, 'pow', ...`
+    will try to load `pow`. This is useful for libraries that provide a single symbol for a function.
+
+    If you pass a list reference, Affix will try to load the first symbol in the list. If that fails, it will try the
+    next symbol in the list. This is useful for libraries that provide multiple symbols for the same function or when
+    you want to provide an alias for a function. For example, `affix libm, ['pow', 'power'], ...` will try to load
+    `pow` first, and if that fails, it will try to load `power`. This is useful for libraries that provide multiple
+    symbols for the same function or when you want to provide an alias for a function.
 
 - `parameters` - required
 
     Provide the argument types in an array reference.
 
+    This is a list of types that the function expects as arguments. For example, `[Double, Double]` indicates that the
+    function takes two double-precision floating-point numbers as arguments. The types can be any of the [Types](#types)
+    supported by Affix, such as `Void`, `Bool`, `Char`, `Int`, `Double`, etc. You can also use aggregates like
+    `Struct`, `Array`, `Union`, and `Enum` to define more complex types.
+
+    If you pass an empty array reference, `[]` Affix will assume that the function takes no arguments. This is useful
+    for functions that do not require any parameters, such as `getpid` or `time`.
+
 - `return` - required
 
     A single return type for the function.
+
+    This is the type that the function returns. For example, `Double` indicates that the function returns a
+    double-precision floating-point number. The return type can be any of the [Types](#types) supported by Affix, such as
+    `Void`, `Bool`, `Char`, `Int`, `Double`, etc. You can also use aggregates like `Struct`, `Array`,
+    `Union`, and `Enum` to define more complex return types.
 
 On success, `affix( ... )` returns the generated code reference which may be called directly but you'll likely use the
 name you provided.
@@ -106,6 +143,9 @@ Parameters include:
     File path or name of the library to load symbols from. Pass an explicit `undef` to pull functions from the main
     executable.
 
+    If you pass a list reference, Affix will try to load the library with the given name and version. See 
+    [affix( ... )](#affix) for more details.
+
 - `symbol_name` - required
 
     Name of the symbol to wrap.
@@ -119,7 +159,7 @@ Parameters include:
     A single return type for the function.
 
 `wrap( ... )` behaves exactly like `affix( ... )` but returns an anonymous subroutine and does not pollute the
-namespace with a named function.
+namespace with a named function.    
 
 ## `pin( ... )`
 
@@ -154,6 +194,60 @@ Expected parameters include:
     Indicate to Affix what type of data the variable contains.
 
 This is likely broken on BSD but patches are welcome.
+
+## `unpin( ... )`
+
+```
+unpin $errno;
+```
+
+Removes the magic applied by `pin( ... )` to a variable.
+
+## `marshal( ... )`
+
+```perl
+my $struct = Struct[ name => Str, age => Int ];
+my $ptr = Pointer[ $struct ];
+my $raw_data = $ptr->marshal( $struct_data );
+```
+
+Marshals a structure or array into raw data. This is useful when you want to convert a structured format into raw
+binary data that can be passed to a function or stored in a file. The `$struct_data` should be a Perl data structure
+that represents the data in the structure or array format, and the `$struct` should be a structure type defined        
+using the [Types](#types) system. The `marshal( ... )` method will return a string containing the raw binary data
+that represents the data in the structure or array format. This is particularly useful for passing data to C functions
+or storing data in a binary format.     
+
+## `unmarshal( ... )`
+
+```perl
+my $struct = Struct[ name => Str, age => Int ];
+my $ptr = Pointer[ $struct ];
+my $data = $ptr->unmarshal( $raw_data );
+```
+
+Unmarshals raw data into a structure or array. This is useful when you have raw binary data that you want to convert
+into a structured format. The `$raw_data` should be a string containing the raw binary data, and the `$struct`
+should be a structure type defined using the [Types](#types) system. The `unmarshal( ... )` method will return a
+Perl data structure that represents the data in the structure or array format.     
+
+## `typedef( ... )`
+
+```perl
+typedef MyType => Struct[ name => Str, age => Int ];
+my $person = MyType->new( name => 'John Doe', age => 30 );
+```
+
+Creates a new type alias for a structure, union, or array. This is useful for creating more readable and maintainable
+code by giving a meaningful name to a complex type. 
+
+```
+The C<$type_name> should be a string representing the name of the
+   type, and the C<$type_definition> should be a structure, union, or array type defined using the L<Types|/Types>    
+   system. The C<typedef( ... )> function will create a new type that can be used in the same way as any other type
+   defined in Affix. This is particularly useful for creating custom types that represent specific data structures or
+   formats, making your code more readable and easier to understand.
+```
 
 # Library Functions
 
@@ -222,6 +316,10 @@ my $ptr = malloc( $size );
 
 Allocates `$size` bytes of uninitialized storage.
 
+The pointer returned is of type `Pointer` and can be used to access the allocated memory. The memory is not        
+initialized, so it may contain garbage values. It is the caller's responsibility to ensure that the memory is
+initialized before use. If the allocation fails, `malloc( ... )` will return an undefined value.
+
 ## `calloc( ... )`
 
 ```perl
@@ -230,6 +328,10 @@ my $ptr = calloc( $num, $size );
 
 Allocates memory for an array of `$num` objects of `$size` and initializes all bytes in the allocated storage to
 zero.
+
+The pointer returned is of type `Pointer` and can be used to access the allocated memory. The memory is initialized
+to zero, so all bytes in the allocated storage will be set to zero. If the allocation fails, `calloc( ... )` will  
+return an undefined value.
 
 ## `realloc( ... )`
 
@@ -249,6 +351,9 @@ free( $ptr );
 
 Deallocates the space previously allocated by `malloc( ... )`, `calloc( ... )`, or `realloc( ... )`.
 
+The pointer `$ptr` must be a valid pointer returned by one of these functions. After calling `free( ... )`, the
+pointer is no longer valid and should not be used. If `$ptr` is `undef`, `free( ... )` does nothing.
+
 ## `memchr( ... )`
 
 ```
@@ -257,6 +362,9 @@ memchr( $ptr, $ch, $count );
 
 Finds the first occurrence of `$ch` in the initial `$count` bytes (each interpreted as unsigned char) of the object
 pointed to by `$ptr`.
+
+If `$ch` is found, `memchr( ... )` returns a pointer to the byte in the object pointed to by `$ptr` that matches
+`$ch`. If `$ch` is not found, it returns `undef`.
 
 ## `memcmp( ... )`
 
@@ -327,6 +435,14 @@ This is a debugging function that probably shouldn't find its way into your code
 
 ## `sv_dump( ... )`
 
+```
+sv_dump( $sv ); 
+```
+
+Dumps the contents of a Perl scalar variable in a human-readable format.
+
+This is a debugging function that probably shouldn't find its way into your code and might not be public in the future.
+
 # Signatures
 
 You must provide Affix with a signature which may include types and calling conventions. Let's start with an example in
@@ -360,9 +476,130 @@ Conventions" in Calling Conventions](https://metacpan.org/pod/Calling%20Conventi
 Affix supports the fundamental types (void, int, etc.) as well as aggregates (struct, array, union). Please note that
 types given are advisory only! No type checking is done at compile or runtime.
 
-See [Affix::Type](https://metacpan.org/pod/Affix%3A%3AType).
+These are the basic types that Affix supports. They are used to define the parameters and return values of functions.
+They may be imported by name or with the `:types` tag.
 
-## Calling Conventions
+- `Void`
+
+    Represents a function that does not return a value. Used as a return type or for functions that take no parameters.
+
+- `Bool`
+
+    Represents a boolean value, typically used for functions that return true or false.
+
+- `Char`
+
+    Represents a single character. Used for functions that take or return characters. 
+
+- `UChar`
+
+    Represents an unsigned character. Used for functions that take or return unsigned characters.
+
+- `SChar`
+
+    Represents a signed character. Used for functions that take or return signed characters.
+
+- `WChar`
+
+    Represents a wide character, typically used for functions that take or return wide characters, such as those used in
+    Unicode or internationalization contexts.
+
+- `Short`
+
+    Represents a short integer. Used for functions that take or return short integers.
+
+- `UShort`
+
+    Represents an unsigned short integer. Used for functions that take or return unsigned short integers.
+
+- `Int`
+
+    Represents a standard integer. Used for functions that take or return integers.
+
+- `UInt`
+
+    Represents an unsigned integer. Used for functions that take or return unsigned integers.
+
+- `Long`
+
+    Represents a long integer. Used for functions that take or return long integers.
+
+- `ULong`
+
+    Represents an unsigned long integer. Used for functions that take or return unsigned long integers.
+
+- `LongLong`       
+
+    Represents a long long integer. Used for functions that take or return long long integers.
+
+- `ULongLong`
+
+    Represents an unsigned long long integer. Used for functions that take or return unsigned long long integers.
+
+- `Size_t`
+
+    Represents a size type, typically used for sizes of objects in memory. Used for functions that take or return sizes.
+
+- `SSize_t`
+
+    Represents a signed size type, typically used for sizes of objects in memory. Used for functions that take or return signed sizes.
+
+- `Float`
+
+    Represents a floating-point number. Used for functions that take or return floating-point numbers.
+
+- `Double`
+
+    Represents a double-precision floating-point number. Used for functions that take or return double-precision numbers.   
+
+- `String`
+
+    Represents a string of characters. Used for functions that take or return strings.
+
+- `WString`
+
+    Represents a wide string of characters. Used for functions that take or return wide strings, typically used in
+    Unicode or internationalization contexts.
+
+- `Pointer[Type]`
+
+    Represents a pointer to a type. Used for functions that take or return pointers to other types. The type can be any
+    Affix type, including aggregates like structs or arrays.
+
+- `Callback[Signature]`
+
+    Represents a callback function. Used for functions that take or return callbacks. The signature defines the parameters
+    and return type of the callback function.       
+
+- `Struct[Fields]`
+
+    Represents a structure with named fields. Used for functions that take or return structures. The fields are defined     
+    as a list of name-type pairs, where each name is a string and each type is an Affix type.
+
+- `Array[Type, Size]`
+
+    Represents an array of a specific type and size. Used for functions that take or return arrays. The type is an Affix
+    type, and the size is an integer that specifies the number of elements in the array.
+
+- `Union[Fields]`
+
+    Represents a union with named fields. Used for functions that take or return unions. The fields are defined as a list
+    of name-type pairs, where each name is a string and each type is an Affix type. Only one field can be used at a time.
+
+- `Enum[Values]`
+
+    Represents an enumeration with named values. Used for functions that take or return enumerations. The values are
+    defined as a list of name-value pairs, where each name is a string and each value is an integer. The values are     
+    typically used to represent a set of named constants.
+
+- `Enum[Values, Type]`
+
+    Represents an enumeration with named values and a specific type. Used for functions that take or return enumerations.
+    The values are defined as a list of name-value pairs, where each name is a string and each value is an integer. The
+    type is an Affix type that specifies the underlying type of the enumeration. This allows for more control over the
+    size and representation of the enumeration values. 
+
+# Calling Conventions
 
 Handle with care! Using these without understanding them can break your code!
 
@@ -421,13 +658,13 @@ user:
 use Affix;
 use Data::Printer;
 typedef PwStruct => Struct [
-    name  => Str,     # username
-    pass  => Str,     # hashed pass if shadow db isn't in use
-    uuid  => UInt,    # user
-    guid  => UInt,    # group
-    gecos => Str,     # real name
-    dir   => Str,     # ~/
-    shell => Str      # bash, etc.
+    name  => String,    # username
+    pass  => String,    # hashed pass if shadow db isn't in use
+    uuid  => UInt,      # user
+    guid  => UInt,      # group
+    gecos => String,    # real name
+    dir   => String,    # ~/
+    shell => String     # bash, etc.
 ];
 affix undef, 'getuid',   []    => Int;
 affix undef, 'getpwuid', [Int] => Pointer [ PwStruct() ];

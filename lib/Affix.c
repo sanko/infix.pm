@@ -465,17 +465,44 @@ void push_union(pTHX_ const infix_type * type, SV * sv, void * p) {
 }
 
 void push_array(pTHX_ const infix_type * type, SV * sv, void * p) {
+    const infix_type * element_type = type->meta.array_info.element_type;
+
+    if (element_type->category == INFIX_TYPE_PRIMITIVE &&
+        (element_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8 ||
+         element_type->meta.primitive_id == INFIX_PRIMITIVE_UINT8) &&
+        SvPOK(sv)) {
+        STRLEN perl_len;
+        const char * perl_str = SvPV(sv, perl_len);
+        size_t c_array_size = infix_type_get_size(type);
+
+        // Copy the string content, being careful not to overflow the C buffer.
+        size_t bytes_to_copy = perl_len < c_array_size ? perl_len : c_array_size;
+        memcpy(p, perl_str, bytes_to_copy);
+
+        // If the Perl string was shorter than the C array, null-terminate it.
+        if (perl_len < c_array_size)
+            ((char *)p)[perl_len] = '\0';
+
+        return;  // Done
+    }
+
+    sv_dump(sv);
+
+
+    // Generic handler for Perl Array Ref -> C array
     if (!SvROK(sv) || SvTYPE(SvRV(sv)) != SVt_PVAV)
         croak("Expected an ARRAY reference for array marshalling");
+
     AV * av = (AV *)SvRV(sv);
     size_t perl_array_len = av_len(av) + 1;
     size_t c_array_len = type->meta.array_info.num_elements;
-    size_t num_to_copy = perl_array_len > c_array_len ? c_array_len : perl_array_len;
+    size_t num_to_copy = perl_array_len < c_array_len ? perl_array_len : c_array_len;
+
     if (perl_array_len > c_array_len)
         warn("Perl array has more elements (%lu) than C array capacity (%lu). Truncating.",
              (unsigned long)perl_array_len,
              (unsigned long)c_array_len);
-    const infix_type * element_type = type->meta.array_info.element_type;
+
     size_t element_size = infix_type_get_size(element_type);
     for (size_t i = 0; i < num_to_copy; ++i) {
         SV ** element_sv_ptr = av_fetch(av, i, 0);
@@ -527,6 +554,7 @@ void push_vector(pTHX_ const infix_type * type, SV * sv, void * p) {
     }
 }
 
+
 void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
     PING;
 
@@ -534,17 +562,18 @@ void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
     if (pointee_type == NULL)
         croak("Internal error in push_pointer: pointee_type is NULL. This indicates a memory lifecycle issue.");
 
-#if DEBUG
-    char type_sig_buffer[512];
-    (void)infix_type_print(type_sig_buffer, sizeof(type_sig_buffer), type, INFIX_DIALECT_SIGNATURE);
-    warn(" --- [Affix DEBUG] push_pointer entered for type '%s' ---", type_sig_buffer);
-    sv_dump(sv);
-#endif
-
     if (!SvOK(sv)) {
         *(void **)ptr = NULL;
         return;
     }
+
+#if DEBUG
+    char type_sig_buffer[512];
+    (void)infix_type_print(type_sig_buffer, sizeof(type_sig_buffer), type, INFIX_DIALECT_SIGNATURE);
+    warn(" --- [Affix DEBUG] push_pointer entered for type '%s' ---", type_sig_buffer);
+    // Now it is safe to dump the SV because we know it's not undef.
+    sv_dump(sv);
+#endif
 
     if (SvROK(sv)) {
         SV * const rv = SvRV(sv);
@@ -683,9 +712,22 @@ SV * pull_union(pTHX_ const infix_type * type, void * p) {
     return newSV(0);
 }
 
+// In Affix.c, replace the existing pull_array function
+
 SV * pull_array(pTHX_ const infix_type * type, void * p) {
-    AV * av = newAV();
     const infix_type * element_type = type->meta.array_info.element_type;
+
+    // --- NEW SPECIAL CASE for char[] -> Perl String ---
+    if (element_type->category == INFIX_TYPE_PRIMITIVE &&
+        (element_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8 ||
+         element_type->meta.primitive_id == INFIX_PRIMITIVE_UINT8)) {
+        // Treat it as a C string. strlen will stop at the first null.
+        return newSVpv((const char *)p, 0);
+    }
+    // --- END SPECIAL CASE ---
+
+    // Generic handler for all other array types (e.g., int[], double[])
+    AV * av = newAV();
     size_t num_elements = type->meta.array_info.num_elements;
     size_t element_size = infix_type_get_size(element_type);
 
@@ -898,7 +940,30 @@ void ptr2sv(pTHX_ void * c_ptr, SV * perl_sv, const infix_type * type) {
         sv_setsv_mg(perl_sv, &PL_sv_undef);
 }
 
+// In Affix.c
+
 void sv2ptr(pTHX_ SV * perl_sv, void * c_ptr, const infix_type * type) {
+    // If the target is a char array and the source is a Perl string, we have a
+    // special, fast path that is more intuitive than the generic array handler.
+    if (type->category == INFIX_TYPE_ARRAY && type->meta.array_info.element_type->category == INFIX_TYPE_PRIMITIVE &&
+        (type->meta.array_info.element_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8 ||
+         type->meta.array_info.element_type->meta.primitive_id == INFIX_PRIMITIVE_UINT8) &&
+        SvPOK(perl_sv)) {
+        STRLEN perl_len;
+        const char * perl_str = SvPV(perl_sv, perl_len);
+        size_t c_array_size = infix_type_get_size(type);
+
+        // Copy the string content, being careful not to overflow the C buffer.
+        size_t bytes_to_copy = perl_len < c_array_size ? perl_len : c_array_size - 1;
+        memcpy(c_ptr, perl_str, bytes_to_copy);
+
+        // Always null-terminate for safety.
+        ((char *)c_ptr)[bytes_to_copy] = '\0';
+
+        return;  // Done with our special case.
+    }
+
+    // Fallback to the generic handler for all other cases (e.g., array of ints).
     Affix_Push h = get_push_handler(type);
     if (!h)
         croak("Cannot convert Perl SV to C type: unsupported type");
@@ -1458,6 +1523,261 @@ XS_INTERNAL(Affix_sv_dump) {
     XSRETURN_EMPTY;
 }
 
+// Add this helper function near the top of Affix.c, after _get_pin_from_sv
+// It creates the blessed Affix::Pointer object from a fully-formed pin.
+static SV * _new_pointer_obj(pTHX_ Affix_Pin * pin) {
+    // Create the underlying scalar that will hold our pin pointer and have magic
+    SV * data_sv = newSV(0);
+
+
+    // Create the blessed reference (the object itself)
+    SV * rv = newRV_inc(data_sv);
+    sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
+
+    // Store the pin's address in the data SV so methods can find it easily.
+    // This is redundant with mg_ptr but is a very fast/standard way for methods to get the C struct.
+    sv_setiv(data_sv, PTR2IV(pin));
+
+    // Attach the pin's magic for dereferencing ($$ptr)
+    _pin_sv(aTHX_ data_sv, pin->type, pin->pointer, true);
+
+    return rv;
+}
+
+
+// --- New XS Functions ---
+// Add these to the end of your Affix.c file.
+
+XS_INTERNAL(Affix_malloc) {
+    dXSARGS;
+    dMY_CXT;
+
+    if (items != 1)
+        croak_xs_usage(cv, "type_signature");
+
+    const char * signature = SvPV_nolen(ST(0));
+    PING;
+    infix_type * type = NULL;
+    infix_arena_t * parse_arena = NULL;
+    PING;
+    if (infix_type_from_signature(&type, &parse_arena, signature, MY_CXT.registry) != INFIX_SUCCESS) {
+        PING;
+        infix_error_details_t err = infix_get_last_error();
+        if (parse_arena)
+            infix_arena_destroy(parse_arena);
+        PING;
+        croak_sv(_format_parse_error(aTHX_ "for malloc", signature, err));
+        PING;
+    }
+
+    size_t size = infix_type_get_size(type);
+    if (size == 0) {
+        PING;
+        infix_arena_destroy(parse_arena);
+        croak("Cannot malloc a zero-sized type");
+    }
+    PING;
+    void * ptr = safemalloc(size);
+
+    Affix_Pin * pin;
+    Newx(pin, 1, Affix_Pin);
+    pin->pointer = ptr;
+    pin->managed = true;  // Perl is responsible for this memory
+    pin->type_arena = infix_arena_create(1024);
+    pin->type = _copy_type_graph_to_arena(pin->type_arena, type);
+    PING;
+    infix_arena_destroy(parse_arena);
+    PING;
+    ST(0) = sv_2mortal(_new_pointer_obj(aTHX_ pin));
+    sv_dump(ST(0));
+    PING;
+    XSRETURN(1);
+}
+
+XS_INTERNAL(Affix_calloc) {
+    dXSARGS;
+    dMY_CXT;
+
+    if (items != 2)
+        croak_xs_usage(cv, "count, type_signature");
+
+    UV count = SvUV(ST(0));
+    const char * signature = SvPV_nolen(ST(1));
+
+    infix_type * elem_type = NULL;
+    infix_arena_t * parse_arena = NULL;
+    if (infix_type_from_signature(&elem_type, &parse_arena, signature, MY_CXT.registry) != INFIX_SUCCESS) {
+        infix_error_details_t err = infix_get_last_error();
+        if (parse_arena)
+            infix_arena_destroy(parse_arena);
+        croak_sv(_format_parse_error(aTHX_ "for calloc", signature, err));
+    }
+
+    size_t elem_size = infix_type_get_size(elem_type);
+    if (elem_size == 0) {
+        infix_arena_destroy(parse_arena);
+        croak("Cannot calloc a zero-sized type");
+    }
+
+    void * ptr = safecalloc(count, elem_size);
+
+    Affix_Pin * pin;
+    Newxz(pin, 1, Affix_Pin);
+    pin->pointer = ptr;
+    pin->managed = true;
+    pin->type_arena = infix_arena_create(1024);
+
+    // Create an array type for the pin: e.g., 'int[10]'
+    infix_type * array_type;
+    infix_type_create_array(pin->type_arena, &array_type, elem_type, count);
+    pin->type = array_type;
+
+    infix_arena_destroy(parse_arena);
+
+    ST(0) = sv_2mortal(_new_pointer_obj(aTHX_ pin));
+    XSRETURN(1);
+}
+
+XS_INTERNAL(Affix_Pointer_realloc) {
+    dXSARGS;
+    if (items != 2)
+        croak_xs_usage(cv, "self, new_size");
+
+    Affix_Pin * pin = _get_pin_from_sv(aTHX_ ST(0));
+    if (!pin || !pin->managed)
+        croak("Can only realloc a managed Affix::Pointer");
+
+    UV new_size = SvUV(ST(1));
+    void * new_ptr = saferealloc(pin->pointer, new_size);
+    pin->pointer = new_ptr;
+
+    // Note: The pin's type info might now be inaccurate (e.g. array length).
+    // The user can call cast() to update it if needed.
+
+    XSRETURN_YES;
+}
+
+XS_INTERNAL(Affix_Pointer_free) {
+    dXSARGS;
+    if (items != 1)
+        croak_xs_usage(cv, "pointer_object");
+
+    Affix_Pin * pin = _get_pin_from_sv(aTHX_ ST(0));
+    if (!pin) {
+        warn("Affix::free called on a non-pointer object");
+        XSRETURN_NO;
+    }
+
+    if (!pin->managed)
+        croak("Cannot free a pointer that was not allocated by Affix (it is unmanaged)");
+
+    if (pin->pointer) {
+        safefree(pin->pointer);
+        pin->pointer = NULL;  // Prevent double-free in DESTROY
+    }
+
+    XSRETURN_YES;
+}
+
+XS_INTERNAL(Affix_Pointer_cast) {
+    dXSARGS;
+    dMY_CXT;
+    if (items != 2)
+        croak_xs_usage(cv, "self, new_type_signature");
+
+    Affix_Pin * pin = _get_pin_from_sv(aTHX_ ST(0));
+    if (!pin)
+        croak("Argument is not an Affix::Pointer object");
+
+    const char * signature = SvPV_nolen(ST(1));
+
+    infix_type * new_type = NULL;
+    infix_arena_t * parse_arena = NULL;
+    if (infix_type_from_signature(&new_type, &parse_arena, signature, MY_CXT.registry) != INFIX_SUCCESS) {
+        infix_error_details_t err = infix_get_last_error();
+        if (parse_arena)
+            infix_arena_destroy(parse_arena);
+        croak_sv(_format_parse_error(aTHX_ "for cast", signature, err));
+    }
+
+    // Replace the pin's old type info
+    if (pin->type_arena)
+        infix_arena_destroy(pin->type_arena);
+
+    pin->type_arena = infix_arena_create(1024);
+    pin->type = _copy_type_graph_to_arena(pin->type_arena, new_type);
+
+    infix_arena_destroy(parse_arena);
+
+    ST(0) = ST(0);  // Return self
+    XSRETURN(1);
+}
+
+XS_INTERNAL(Affix_Pointer_dump) {
+    dXSARGS;
+
+    if (items != 2)
+        croak_xs_usage(cv, "self, length_in_bytes");
+
+    Affix_Pin * pin = _get_pin_from_sv(aTHX_ ST(0));
+    if (!pin)
+        croak("self is not a valid Affix::Pointer object");
+
+    if (!pin->pointer) {
+        warn("Cannot dump a NULL pointer");
+        XSRETURN_EMPTY;
+    }
+
+    UV length = SvUV(ST(1));
+    if (length == 0) {
+        warn("Dump length cannot be zero");
+        XSRETURN_EMPTY;
+    }
+
+    // Call the existing, robust hex dump utility.
+    _DumpHex(aTHX_ pin->pointer, length, "Affix::Pointer::dump()", 0);
+
+    ST(0) = ST(0);  // Return self to allow for method chaining
+    XSRETURN(1);
+}
+// Add this new function to Affix.c, with the other method implementations.
+
+XS_INTERNAL(Affix_Pointer_DESTROY) {
+    dXSARGS;
+
+    // In DESTROY, it's best not to croak. Just be safe and return.
+    if (items != 1)
+        XSRETURN_EMPTY;
+
+    Affix_Pin * pin = _get_pin_from_sv(aTHX_ ST(0));
+
+    // If it's not a valid pin or has already been handled, do nothing.
+    if (!pin)
+        XSRETURN_EMPTY;
+
+#if DEBUG
+    char type_sig_buffer[512] = "???";
+    if (pin->type)
+        (void)infix_type_print(type_sig_buffer, sizeof(type_sig_buffer), pin->type, INFIX_DIALECT_SIGNATURE);
+    warn(" [Affix DEBUG] Affix::Pointer::DESTROY called for pointer of type '%s'. Managed: %s, C ptr: %p",
+         type_sig_buffer,
+         pin->managed ? "true" : "false",
+         pin->pointer);
+#endif
+
+    // The core logic: only free memory that we are managing and that still exists.
+    if (pin->managed && pin->pointer) {
+        safefree(pin->pointer);
+
+        // CRITICAL: Null out the pointer to prevent the final magic hook
+        // (Affix_free_pin) from trying to free it again.
+        pin->pointer = NULL;
+    }
+    //~ if (mg_findext(ST(0), PERL_MAGIC_ext, &Affix_pin_vtbl) && !sv_unmagicext(ST(0), PERL_MAGIC_ext,
+    //&Affix_pin_vtbl))
+    ;
+    XSRETURN_EMPTY;
+}
 void boot_Affix(pTHX_ CV * cv) {
     dXSBOOTARGSXSAPIVERCHK;
     PERL_UNUSED_VAR(items);
@@ -1492,8 +1812,8 @@ void boot_Affix(pTHX_ CV * cv) {
     (void)newXSproto_portable("Affix::unpin", Affix_unpin, __FILE__, "$");
     export_function("Affix", "unpin", "pin");
 
-    newXS("Affix::sizeof", Affix_sizeof, __FILE__);
-    newXS("Affix::typedef", Affix_typedef, __FILE__);
+    (void)newXSproto_portable("Affix::sizeof", Affix_sizeof, __FILE__, "$");
+    (void)newXSproto_portable("Affix::typedef", Affix_typedef, __FILE__, "$");
 
     export_function("Affix", "sizeof", "core");
     export_function("Affix", "affix", "core");
@@ -1504,6 +1824,29 @@ void boot_Affix(pTHX_ CV * cv) {
     export_function("Affix", "typedef", "registry");
 
     (void)newXSproto_portable("Affix::sv_dump", Affix_sv_dump, __FILE__, "$");
+
+    {  // Memory
+        (void)newXSproto_portable("Affix::malloc", Affix_malloc, __FILE__, "$");
+
+        newXS("Affix::calloc", Affix_calloc, __FILE__);
+        newXS("Affix::free", Affix_Pointer_free, __FILE__);
+
+        (void)newXSproto_portable("Affix::Pointer::realloc", Affix_Pointer_realloc, __FILE__, "$$");
+        (void)newXSproto_portable("Affix::Pointer::free", Affix_Pointer_free, __FILE__, "$");
+        (void)newXSproto_portable("Affix::Pointer::cast", Affix_Pointer_cast, __FILE__, "$$");
+        (void)newXSproto_portable("Affix::Pointer::dump", Affix_Pointer_dump, __FILE__, "$$");
+        (void)newXSproto_portable("Affix::Pointer::DESTROY", Affix_Pointer_DESTROY, __FILE__, "$;$");
+
+        // Export tags
+        export_function("Affix", "malloc", "mem");
+        export_function("Affix", "calloc", "mem");
+        export_function("Affix", "free", "mem");
+
+        // Add :mem to :all tag for convenience
+        export_function("Affix", "malloc", "all");
+        export_function("Affix", "calloc", "all");
+        export_function("Affix", "free", "all");
+    }
 
     Perl_xs_boot_epilog(aTHX_ ax);
 }
