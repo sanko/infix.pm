@@ -172,7 +172,7 @@ use %s;
         my $build_dir = $cwd->child('infix')->absolute;
 
         #~ chdir $build_dir;
-        system $^X, 'infix/build.pl', '--cflags', '-fPIC';
+        system $^X, 'infix/build.pl', '--compiler', $Config{cc}, '--cflags', '-fPIC';
 
         #, '--cflags', $cflags;
         #~ warn `$^X infix/build.pl --cflags="$cflags"`;
