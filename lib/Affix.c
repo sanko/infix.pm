@@ -1035,7 +1035,7 @@ XS_INTERNAL(Affix_affix) {
 
     if (SvROK(name_sv) && SvTYPE(SvRV(name_sv)) == SVt_PVAV) {
         AV * name_av = (AV *)SvRV(name_sv);
-        if (av_count(name_av) != 1)
+        if (av_count(name_av) != 2)
             croak("Name spec arrayref must contain exactly two elements: [symbol_name, new_sub_name]");
         symbol_name_str = SvPV_nolen(*av_fetch(name_av, 0, 0));
         rename_str = SvPV_nolen(*av_fetch(name_av, 1, 0));
