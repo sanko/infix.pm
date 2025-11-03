@@ -16,6 +16,8 @@
 #define infix_malloc safemalloc
 #define infix_calloc safecalloc
 #define infix_free safefree
+#define infix_realloc saferealloc
+
 // This include order is critical. We need Perl's types defined first.
 #include "common/infix_internals.h"
 #include <infix/infix.h>
@@ -55,7 +57,8 @@ typedef SV * (*Affix_Pull)(pTHX_ const infix_type *, void *);
 /// This struct is the "context" attached to the generated XS subroutine.
 typedef struct {
     infix_forward_t * infix;       ///< Handle to the infix trampoline and type info.
-    infix_arena_t * args_arena;    ///< Fast memory allocator for arguments and return value during a call.
+    infix_arena_t * args_arena;    ///< Fast memory allocator for arguments during a call.
+    infix_arena_t * ret_arena;     ///< Fast memory allocator for return value during a call.
     infix_cif_func cif;            ///< A direct function pointer to the JIT-compiled trampoline code.
     Affix_Push * push;             ///< An array of marshalling functions for the arguments (Perl -> C).
     Affix_Pull pull;               ///< A marshalling function for the return value (C -> Perl).
@@ -114,6 +117,7 @@ void _pin_sv(pTHX_ SV * sv, const infix_type * type, void * pointer, bool manage
 int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg);
 int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg);
 int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg);
+bool is_pin(pTHX_ SV * sv);
 
 // The C function that gets called when a magically-promoted CV* is destroyed.
 int Affix_free_implicit_callback(pTHX_ SV * sv, MAGIC * mg);

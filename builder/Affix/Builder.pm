@@ -10,7 +10,7 @@ class    #
     use ExtUtils::Install qw[pm_to_blib install];
     use ExtUtils::InstallPaths 0.002;
     use File::Basename        qw[basename dirname];
-    use File::Path            qw[mkpath rmtree];
+    use File::Path            qw[make_path remove_tree];
     use File::Spec::Functions qw[catfile catdir rel2abs abs2rel splitdir curdir];
     use JSON::PP 2            qw[encode_json decode_json];
 
@@ -83,7 +83,7 @@ class    #
         my %module_shared = map { $_ => catfile( qw[blib lib auto share module], abs2rel( $_, 'module-share' ) ) } find( qr/(?:)/, 'module-share' );
         pm_to_blib( { %modules, %docs, %scripts, %dist_shared, %module_shared }, catdir(qw[blib lib auto]) );
         make_executable($_) for values %scripts;
-        mkpath( catdir(qw[blib arch]), $verbose );
+        make_path( catdir(qw[blib arch]), { chmod => 0777, verbose => $verbose } );
         0;
     }
     method step_clean() { rmtree( $_, $verbose ) for qw[blib temp]; 0 }
@@ -172,7 +172,7 @@ use %s;
         my $build_dir = $cwd->child('infix')->absolute;
 
         #~ chdir $build_dir;
-        system $^X, 'infix/build.pl', '--compiler', $Config{cc}, '--cflags', '-fPIC';
+        system $^X, 'infix/build.pl', '--compiler', ( $Config{cc} eq 'cc' ? 'gcc' : $Config{cc} ), '--cflags', '-fPIC';
 
         #, '--cflags', $cflags;
         #~ warn `$^X infix/build.pl --cflags="$cflags"`;
@@ -225,8 +225,9 @@ use %s;
         require DynaLoader;
         my $mod2fname = defined &DynaLoader::mod2fname ? \&DynaLoader::mod2fname : sub { return $_[0][-1] };
         my @parts     = ('Affix');
-        my $archdir   = catdir( qw/blib arch auto/, @parts );
-        mkpath( $archdir, $verbose, oct '755' ) unless -d $archdir;
+        my $archdir   = rel2abs catdir( curdir, qw[. blib arch auto], @parts );
+        my $err;    # TODO: I should print these on failure but...
+        make_path( $archdir, { chmod => 0755, error => \$err, verbose => $verbose } );
         my $lib_file = catfile( $archdir, $mod2fname->( \@parts ) . '.' . $Config{dlext} );
         my @dirs;
         push @dirs, '../';

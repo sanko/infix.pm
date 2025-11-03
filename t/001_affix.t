@@ -381,18 +381,16 @@ subtest '"Kitchen Sink" Callback' => sub {
     )->int32';
     isa_ok my $harness = wrap( $lib_path, 'call_kitchen_sink', $cb_sig ), ['Affix'];
     my $callback_sub = sub( $a, $b, $c, $d, $e, $f, $g, $h, $i, $j_ref ) {
-        is $a, 1,              'Callback arg 1 (int)';
-        is $b, 2.0,            'Callback arg 2 (double)';
-        is $c, 3,              'Callback arg 3 (int)';
-        is $d, 4.0,            'Callback arg 4 (double)';
-        is $e, 5,              'Callback arg 5 (int)';
-        is $f, 6.0,            'Callback arg 6 (double)';
-        is $g, 7,              'Callback arg 7 (int)';
-        is $h, 8.0,            'Callback arg 8 (double)';
-        is $i, 'kitchen sink', 'Callback arg 9 (string)';
-        use Data::Dump;
-        ddx \@_;
-        is $$j_ref, 100, 'Callback arg 10 (int*)';
+        is $a,      1,              'Callback arg 1 (int)';
+        is $b,      2.0,            'Callback arg 2 (double)';
+        is $c,      3,              'Callback arg 3 (int)';
+        is $d,      4.0,            'Callback arg 4 (double)';
+        is $e,      5,              'Callback arg 5 (int)';
+        is $f,      6.0,            'Callback arg 6 (double)';
+        is $g,      7,              'Callback arg 7 (int)';
+        is $h,      8.0,            'Callback arg 8 (double)';
+        is $i,      'kitchen sink', 'Callback arg 9 (string)';
+        is $$j_ref, 100,            'Callback arg 10 (int*)';
         $$j_ref = 200;
     };
     is $harness->($callback_sub), 201, 'return value';
