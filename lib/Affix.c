@@ -565,6 +565,7 @@ void push_vector(pTHX_ const infix_type * type, SV * sv, void * p) {
         }
     }
 }
+
 void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
     PING;
 
@@ -683,6 +684,15 @@ void push_pointer(pTHX_ const infix_type * type, SV * sv, void * ptr) {
 
     croak("Don't know how to handle this type of scalar as a pointer argument");
 }
+
+void push_sv(pTHX_ const infix_type * type, SV * sv, void * ptr) {
+    //~ XXX: Do we SvREFCNT_inc?
+    SvREFCNT_inc(sv);
+
+    *(void **)ptr = sv;
+}
+
+//
 SV * pull_sint8(pTHX_ const infix_type * t, void * p) { return newSViv(*(int8_t *)p); }
 SV * pull_uint8(pTHX_ const infix_type * t, void * p) { return newSVuv(*(uint8_t *)p); }
 SV * pull_sint16(pTHX_ const infix_type * t, void * p) { return newSViv(*(int16_t *)p); }
@@ -836,6 +846,12 @@ SV * pull_pointer(pTHX_ const infix_type * type, void * ptr) {
     }
 }
 
+SV * pull_sv(pTHX_ const infix_type * type, void * ptr) {
+    void * c_ptr = *(void **)ptr;
+    if (c_ptr == NULL)
+        return newSV(0);  // Return mutable undef for NULL pointers
+    return SvREFCNT_inc((MUTABLE_SV(c_ptr)));
+}
 static const Affix_Push push_handlers[] = {[INFIX_PRIMITIVE_BOOL] = push_bool,
                                            [INFIX_PRIMITIVE_SINT8] = push_sint8,
                                            [INFIX_PRIMITIVE_UINT8] = push_uint8,
@@ -876,7 +892,15 @@ Affix_Push get_push_handler(const infix_type * type) {
     case INFIX_TYPE_PRIMITIVE:
         return push_handlers[type->meta.primitive_id];
     case INFIX_TYPE_POINTER:
-        return push_pointer;
+        {
+            const char * name = infix_type_get_name(type);
+            if (!name)
+                return push_pointer;
+            if (strnEQ(name, "SV", 2))
+                return push_sv;
+            // warn("Pointer type is: %s", name);
+            return push_pointer;
+        }
     case INFIX_TYPE_STRUCT:
         return push_struct;
     case INFIX_TYPE_UNION:
@@ -901,7 +925,15 @@ Affix_Pull get_pull_handler(const infix_type * type) {
     case INFIX_TYPE_PRIMITIVE:
         return pull_handlers[type->meta.primitive_id];
     case INFIX_TYPE_POINTER:
-        return pull_pointer;
+        {
+            const char * name = infix_type_get_name(type);
+            if (!name)
+                return pull_pointer;
+            if (strnEQ(name, "SV", 2))
+                return pull_sv;
+            // warn("Pointer type is: %s", name);
+            return pull_pointer;
+        }
     case INFIX_TYPE_STRUCT:
         return pull_struct;
     case INFIX_TYPE_UNION:
@@ -1181,14 +1213,19 @@ void _affix_callback_handler_entry(infix_context_t * ctx, void * retval, void **
     PING;
     SAVETMPS;
     PUSHMARK(SP);
+    PING;
     size_t num_args = infix_reverse_get_num_args(ctx);
     for (size_t i = 0; i < num_args; ++i) {
+        PING;
         const infix_type * type = infix_reverse_get_arg_type(ctx, i);
+        PING;
         Affix_Pull puller = get_pull_handler(type);
+        PING;
         if (!puller)
             croak("Unsupported callback argument type");
         PING;
-        XPUSHs(sv_2mortal(puller(aTHX_ type, args[i])));
+        mXPUSHs(puller(aTHX_ type, args[i]));
+        PING;
     }
 
     PUTBACK;
