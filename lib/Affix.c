@@ -201,6 +201,7 @@ int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg) {
     return 0;
 }
 int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg) {
+    warn("Affix_get_pin");
     PING;
     Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
     PING;
@@ -218,11 +219,42 @@ int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg) {
          type_sig_buffer);
 #endif
     PING;
+    DumpHex(pin->pointer, 16);
     ptr2sv(aTHX_ pin->pointer, sv, pin->type);
+
+#if 1
+    const char * type_display_str = "???";  // Final fallback value
+    char type_sig_buffer[512];              // Stack buffer for generated signatures
+
+    if (pin->type) {
+        // 1. Try to get the pretty, semantic name first (e.g., "@MyStruct").
+        type_display_str = infix_type_get_name(pin->type);
+
+        // 2. If the type is anonymous (no name), fall back to printing the full signature.
+        if (type_display_str == NULL) {
+            if (infix_type_print(type_sig_buffer, sizeof(type_sig_buffer), pin->type, INFIX_DIALECT_SIGNATURE) ==
+                INFIX_SUCCESS)
+                // Point to the string we just generated on the stack.
+                type_display_str = type_sig_buffer;
+            else
+                // If printing fails, ensure we fall back to the default "???".
+                type_display_str = "???";
+        }
+    }
+
+    // Create the final formatted SV using the chosen display string.
+    SV * formatted_sv =
+        sv_2mortal(pin->pointer ? newSVpvf("Affix::Pin(type='%s', addr=%p)", type_display_str, pin->pointer)
+                                : newSVpvf("Affix::Pin(type='%s', addr=NULL)", type_display_str));
+    sv_dump(formatted_sv);
+
+    sv_setsv_mg(sv, formatted_sv);
+#endif
     PING;
     return 0;
 }
 int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg) {
+    warn("Affix_set_pin");
     PING;
     Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
     if (!pin || !pin->pointer || !pin->type)
@@ -1519,24 +1551,23 @@ XS_INTERNAL(Affix_malloc) {
     dMY_CXT;
 
     if (items != 1)
-        croak_xs_usage(cv, "type_signature");
+        croak_xs_usage(cv, "size");
 
-    const char * signature = SvPV_nolen(ST(0));
+    UV size = SvUV(ST(0));
     PING;
     infix_type * type = NULL;
     infix_arena_t * parse_arena = NULL;
     PING;
-    if (infix_type_from_signature(&type, &parse_arena, signature, MY_CXT.registry) != INFIX_SUCCESS) {
+    if (infix_type_from_signature(&type, &parse_arena, "*void", MY_CXT.registry) != INFIX_SUCCESS) {
         PING;
         infix_error_details_t err = infix_get_last_error();
         if (parse_arena)
             infix_arena_destroy(parse_arena);
         PING;
-        croak_sv(_format_parse_error(aTHX_ "for malloc", signature, err));
+        croak_sv(_format_parse_error(aTHX_ "for malloc", "*void", err));
         PING;
     }
 
-    size_t size = infix_type_get_size(type);
     if (size == 0) {
         PING;
         infix_arena_destroy(parse_arena);
@@ -1591,7 +1622,7 @@ XS_INTERNAL(Affix_calloc) {
     Newxz(pin, 1, Affix_Pin);
     pin->pointer = ptr;
     pin->managed = true;
-    pin->type_arena = infix_arena_create(1024);
+    pin->type_arena = infix_arena_create(1024);  // TODO: Use growable arena
 
     // Create an array type for the pin: e.g., 'int[10]'
     infix_type * array_type;
@@ -1707,7 +1738,37 @@ XS_INTERNAL(Affix_Pointer_dump) {
     ST(0) = ST(0);  // Return self to allow for method chaining
     XSRETURN(1);
 }
-// Add this new function to Affix.c, with the other method implementations.
+
+XS_INTERNAL(Affix_Pointer_as_string) {
+    dXSARGS;
+    if (items != 1)
+        croak_xs_usage(cv, "self");
+
+    // Get the C struct from the Perl object
+    Affix_Pin * pin = _get_pin_from_sv(aTHX_ ST(0));
+
+    if (!pin) {
+        // This should ideally not happen if the object is valid, but it's a safe fallback.
+        ST(0) = sv_2mortal(newSVpv("Affix::Pointer(INVALID)", 0));
+        XSRETURN(1);
+    }
+
+    // Prepare a buffer to hold the C type signature
+    char type_sig_buffer[512] = "???";
+    if (pin->type) {
+        // Use the infix library to print the type signature
+        (void)infix_type_print(type_sig_buffer, sizeof(type_sig_buffer), pin->type, INFIX_DIALECT_SIGNATURE);
+    }
+
+    // Format the final string.
+    // Handle NULL pointers gracefully.
+    if (pin->pointer == NULL)
+        ST(0) = sv_2mortal(newSVpvf("Affix::Pointer(type='%s', addr=NULL)", type_sig_buffer));
+    else
+        ST(0) = sv_2mortal(newSVpvf("Affix::Pointer(type='%s', addr=%p)", type_sig_buffer, pin->pointer));
+
+    XSRETURN(1);
+}
 
 XS_INTERNAL(Affix_Pointer_DESTROY) {
     dXSARGS;
@@ -1803,6 +1864,8 @@ void boot_Affix(pTHX_ CV * cv) {
         (void)newXSproto_portable("Affix::Pointer::cast", Affix_Pointer_cast, __FILE__, "$$");
         (void)newXSproto_portable("Affix::Pointer::dump", Affix_Pointer_dump, __FILE__, "$$");
         (void)newXSproto_portable("Affix::Pointer::DESTROY", Affix_Pointer_DESTROY, __FILE__, "$;$");
+        sv_setsv(get_sv("Affix::Pointer::()", TRUE), &PL_sv_yes);
+        (void)newXSproto_portable("Affix::Pointer::()", Affix_Pointer_as_string, __FILE__, "$;@");
 
         // Export tags
         export_function("Affix", "malloc", "mem");
