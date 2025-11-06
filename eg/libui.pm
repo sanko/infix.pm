@@ -215,9 +215,9 @@ END_TYPEDEFS
         uiMainSteps     => '()->void',
         uiMainStep      => '(wait: int)->int',
         uiQuit          => '()->void',
-        uiQueueMain     => '(cb: *((*void)->void), data: *void)->void',
+        uiQueueMain     => '(cb: *((@SV)->void), data: @SV)->void',
         uiTimer         => '(ms: int, cb: *((@SV)->int), data: @SV)->void',
-        uiOnShouldQuit  => '(cb: *((*void)->int), data: *void)->void',
+        uiOnShouldQuit  => '(cb: *((@SV)->int), data: @SV)->void',
         uiFreeText      => '(text: *char)->void',
 
         # Generic Control functions
@@ -241,9 +241,9 @@ END_TYPEDEFS
         uiWindowSetContentSize       => '(@uiWindow, int, int)->void',
         uiWindowFullscreen           => '(@uiWindow)->int',
         uiWindowSetFullscreen        => '(@uiWindow, int)->void',
-        uiWindowOnContentSizeChanged => '(@uiWindow, cb: *((@uiWindow, *void)->void), data: *void)->void',
-        uiWindowOnClosing            => '(@uiWindow, cb: *((@uiWindow, *void)->int), data: *void)->void',
-        uiWindowOnPositionChanged    => '(@uiWindow, cb: *((@uiWindow, *void)->void), data: *void)->void',
+        uiWindowOnContentSizeChanged => '(@uiWindow, cb: *((@uiWindow, @SV)->void), data: @SV)->void',
+        uiWindowOnClosing            => '(@uiWindow, cb: *((@uiWindow, @SV)->int), data: @SV)->void',
+        uiWindowOnPositionChanged    => '(@uiWindow, cb: *((@uiWindow, @SV)->void), data: @SV)->void',
         uiWindowBorderless           => '(@uiWindow)->int',
         uiWindowSetBorderless        => '(@uiWindow, int)->void',
         uiWindowChild                => '(@uiWindow)->@uiControl',
@@ -255,7 +255,7 @@ END_TYPEDEFS
         uiNewButton       => '(*char)->@uiButton',
         uiButtonText      => '(@uiButton)->*char',
         uiButtonSetText   => '(@uiButton, *char)->void',
-        uiButtonOnClicked => '(@uiButton, cb: *((@uiButton, *void)->void), data: *void)->void',
+        uiButtonOnClicked => '(@uiButton, cb: *((@uiButton, @SV)->void), data: @SV)->void',
 
         # Box
         uiNewHorizontalBox => '()->@uiBox',
@@ -269,7 +269,7 @@ END_TYPEDEFS
         uiNewCheckbox        => '(*char)->@uiCheckbox',
         uiCheckboxText       => '(@uiCheckbox)->*char',
         uiCheckboxSetText    => '(@uiCheckbox, *char)->void',
-        uiCheckboxOnToggled  => '(@uiCheckbox, cb: *((@uiCheckbox, *void)->void), data: *void)->void',
+        uiCheckboxOnToggled  => '(@uiCheckbox, cb: *((@uiCheckbox, @SV)->void), data: @SV)->void',
         uiCheckboxChecked    => '(@uiCheckbox)->int',
         uiCheckboxSetChecked => '(@uiCheckbox, int)->void',
 
@@ -279,7 +279,7 @@ END_TYPEDEFS
         uiNewSearchEntry   => '()->@uiEntry',
         uiEntryText        => '(@uiEntry)->*char',
         uiEntrySetText     => '(@uiEntry, *char)->void',
-        uiEntryOnChanged   => '(@uiEntry, cb: * ((@uiEntry, *void)->void), data: *void)->void',
+        uiEntryOnChanged   => '(@uiEntry, cb: * ((@uiEntry, @SV)->void), data: @SV)->void',
         uiEntryReadOnly    => '(@uiEntry)->int',
         uiEntrySetReadOnly => '(@uiEntry, int)->void',
 
@@ -309,13 +309,13 @@ END_TYPEDEFS
         uiNewSpinbox       => '(min: int, max: int)->@uiSpinbox',
         uiSpinboxValue     => '(@uiSpinbox)->int',
         uiSpinboxSetValue  => '(@uiSpinbox, int)->void',
-        uiSpinboxOnChanged => '(@uiSpinbox, cb: *((@uiSpinbox, *void)->void), data: *void)->void',
+        uiSpinboxOnChanged => '(@uiSpinbox, cb: *((@uiSpinbox, @SV)->void), data: @SV)->void',
 
         # Slider
         uiNewSlider       => '(min: int, max: int)->@uiSlider',
         uiSliderValue     => '(@uiSlider)->int',
         uiSliderSetValue  => '(@uiSlider, int)->void',
-        uiSliderOnChanged => '(@uiSlider, cb: *((@uiSlider, *void)->void), data: *void)->void',
+        uiSliderOnChanged => '(@uiSlider, cb: *((@uiSlider, @SV)->void), data: @SV)->void',
 
         # ProgressBar
         uiNewProgressBar      => '()->@uiProgressBar',
@@ -330,21 +330,21 @@ END_TYPEDEFS
         uiComboboxAppend      => '(@uiCombobox, *char)->void',
         uiComboboxSelected    => '(@uiCombobox)->int',
         uiComboboxSetSelected => '(@uiCombobox, int)->void',
-        uiComboboxOnSelected  => '(@uiCombobox, cb: *((@uiCombobox, *void)->void), data: *void)->void',
+        uiComboboxOnSelected  => '(@uiCombobox, cb: *((@uiCombobox, @SV)->void), data: @SV)->void',
 
         # Editable Combobox
         uiNewEditableCombobox       => '()->@uiEditableCombobox',
         uiEditableComboboxAppend    => '(@uiEditableCombobox, *char)->void',
         uiEditableComboboxText      => '(@uiEditableCombobox)->*char',
         uiEditableComboboxSetText   => '(@uiEditableCombobox, *char)->void',
-        uiEditableComboboxOnChanged => '(@uiEditableCombobox, cb: *((@uiEditableCombobox, *void)->void), data: *void)->void',
+        uiEditableComboboxOnChanged => '(@uiEditableCombobox, cb: *((@uiEditableCombobox, @SV)->void), data: @SV)->void',
 
         # RadioButtons
         uiNewRadioButtons         => '()->@uiRadioButtons',
         uiRadioButtonsAppend      => '(@uiRadioButtons, *char)->void',
         uiRadioButtonsSelected    => '(@uiRadioButtons)->int',
         uiRadioButtonsSetSelected => '(@uiRadioButtons, int)->void',
-        uiRadioButtonsOnSelected  => '(@uiRadioButtons, cb: * ((@uiRadioButtons, *void)->void), data: *void)->void',
+        uiRadioButtonsOnSelected  => '(@uiRadioButtons, cb: * ((@uiRadioButtons, @SV)->void), data: @SV)->void',
 
         # DateTimePicker
         uiNewDateTimePicker => '()->@uiDateTimePicker',
@@ -357,7 +357,7 @@ END_TYPEDEFS
         uiMultilineEntryText           => '(@uiMultilineEntry)->*char',
         uiMultilineEntrySetText        => '(@uiMultilineEntry, *char)->void',
         uiMultilineEntryAppend         => '(@uiMultilineEntry, *char)->void',
-        uiMultilineEntryOnChanged      => '(@uiMultilineEntry, cb: * ((@uiMultilineEntry, *void)->void), data: *void)->void',
+        uiMultilineEntryOnChanged      => '(@uiMultilineEntry, cb: * ((@uiMultilineEntry, @SV)->void), data: @SV)->void',
         uiMultilineEntryReadOnly       => '(@uiMultilineEntry)->int',
         uiMultilineEntrySetReadOnly    => '(@uiMultilineEntry, int)->void',
 
@@ -373,7 +373,7 @@ END_TYPEDEFS
         # MenuItem
         uiMenuItemEnable     => '(@uiMenuItem)->void',
         uiMenuItemDisable    => '(@uiMenuItem)->void',
-        uiMenuItemOnClicked  => '(@uiMenuItem, cb: * ((@uiMenuItem, @uiWindow, *void)->void), data: *void)->void',
+        uiMenuItemOnClicked  => '(@uiMenuItem, cb: * ((@uiMenuItem, @uiWindow, @SV)->void), data: @SV)->void',
         uiMenuItemChecked    => '(@uiMenuItem)->int',
         uiMenuItemSetChecked => '(@uiMenuItem, int)->void',
 
@@ -449,7 +449,7 @@ END_TYPEDEFS
         uiNewColorButton       => '()->@uiColorButton',
         uiColorButtonColor     => '(@uiColorButton, *double, *double, *double, *double)->void',
         uiColorButtonSetColor  => '(@uiColorButton, double, double, double, double)->void',
-        uiColorButtonOnChanged => '(@uiColorButton, cb: * ((@uiColorButton, *void)->void), data: *void)->void',
+        uiColorButtonOnChanged => '(@uiColorButton, cb: * ((@uiColorButton, @SV)->void), data: @SV)->void',
 
         # Open/Save Dialogs
         uiOpenFile    => '(@uiWindow)->*char',
@@ -457,7 +457,7 @@ END_TYPEDEFS
         uiMsgBox      => '(@uiWindow, *char, *char)->void',
         uiMsgBoxError => '(@uiWindow, *char, *char)->void'
     ) {
-        my $as = 'LibUI::' . ( $name =~ s/^ui//r );
+        my $as = 'LibUI::' . $name;
         affix $lib, [ $name => $as ], $sig;
 
         #~ warn $lib;

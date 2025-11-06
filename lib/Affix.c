@@ -437,7 +437,7 @@ void push_sint8(pTHX_ const infix_type * t, SV * sv, void * p) { *(int8_t *)p = 
 void push_uint8(pTHX_ const infix_type * t, SV * sv, void * p) { *(uint8_t *)p = (uint8_t)SvUV(sv); }
 void push_sint16(pTHX_ const infix_type * t, SV * sv, void * p) { *(int16_t *)p = (int16_t)SvIV(sv); }
 void push_uint16(pTHX_ const infix_type * t, SV * sv, void * p) { *(uint16_t *)p = (uint16_t)SvUV(sv); }
-void push_sint32(pTHX_ const infix_type * t, SV * sv, void * p) { *(int32_t *)p = (int32_t)SvIV(sv); }
+void push_sint32(pTHX_ const infix_type * t, SV * sv, void * p) { *(int32_t *)p = (int32_t)SvIOK(sv) ? SvIV(sv) : 0; }
 void push_uint32(pTHX_ const infix_type * t, SV * sv, void * p) { *(uint32_t *)p = (uint32_t)SvUV(sv); }
 void push_sint64(pTHX_ const infix_type * t, SV * sv, void * p) { *(int64_t *)p = (int64_t)SvIV(sv); }
 void push_uint64(pTHX_ const infix_type * t, SV * sv, void * p) { *(uint64_t *)p = (uint64_t)SvUV(sv); }
@@ -840,18 +840,21 @@ SV * pull_vector(pTHX_ const infix_type * type, void * p) {
 }
 
 SV * pull_pointer(pTHX_ const infix_type * type, void * ptr) {
+    warn("pull_pointer((type: %p, ptr: %p)", type, ptr);
     void * c_ptr = *(void **)ptr;
+
+
+    if (c_ptr == NULL)
+        warn("??????????????? c_ptr is nullptr");
 
     if (c_ptr == NULL)
         return newSV(0);  // Return undef for NULL pointers
 
     const infix_type * pointee_type = type->meta.pointer_info.pointee_type;
 
-    // Special case for `char*`, which is marshalled directly as a Perl string.
-    if (pointee_type->category == INFIX_TYPE_PRIMITIVE && pointee_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8)
-        return newSVpv((const char *)c_ptr, 0);
+    warn("------------- pointee_type->category: %d", pointee_type->category);
 
-    // NEW LOGIC: Check the category of the type being pointed to.
+    // Check the category of the type being pointed to.
     switch (pointee_type->category) {
     case INFIX_TYPE_STRUCT:
         // If we have a pointer to a struct, automatically dereference it
@@ -864,6 +867,14 @@ SV * pull_pointer(pTHX_ const infix_type * type, void * ptr) {
         return pull_array(aTHX_ pointee_type, c_ptr);
 
     case INFIX_TYPE_PRIMITIVE:
+        warn("!!!!!!!!!!!!!!!!!!!!!!!!!!! pull pointer to a primative (%d)", pointee_type->meta.primitive_id);
+        switch (pointee_type->meta.primitive_id) {
+        case INFIX_PRIMITIVE_SINT8:  // Special case for `char*`, which is marshalled directly as a Perl string.
+            return newSVpv((const char *)c_ptr, 0);
+        case INFIX_PRIMITIVE_SINT32:
+            return (newSViv(1000));
+        }
+        // fallthrough
     case INFIX_TYPE_POINTER:
     case INFIX_TYPE_UNION:
     default:
@@ -1048,20 +1059,50 @@ void Affix_trigger(pTHX_ CV * cv) {
 
     size_t num_args = infix_forward_get_num_args(affix->infix);
 
-    if ((SP - MARK) != num_args)
+    // Array to track which arguments are scalar references (out-params)
+    SV ** out_params = NULL;
+    Newxz(out_params, num_args, SV *);
+
+    if ((SP - MARK) != num_args) {
+        safefree(out_params);
         croak("Wrong number of arguments to affixed function. Expected %" UVuf ", got %" UVuf,
               (UV)num_args,
               (UV)(SP - MARK));
+    }
 
     affix->args_arena->current_offset = 0;  // Reset arenas
     affix->ret_arena->current_offset = 0;
 
     void ** c_args = infix_arena_alloc(affix->args_arena, sizeof(void *) * num_args, _Alignof(void *));
     for (size_t i = 0; i < num_args; ++i) {
+        SV * arg_sv = ST(i);
+        // Check if it's a reference to a simple, non-magical scalar
+        if (SvROK(arg_sv) && !is_pin(aTHX_ arg_sv)) {
+            SV * const rsv = SvRV(arg_sv);
+            if (!SvROK(rsv) && SvTYPE(rsv) < SVt_PVMG)
+                out_params[i] = rsv;
+        }
+
         const infix_type * arg_type = infix_forward_get_arg_type(affix->infix, i);
         void * c_arg_ptr =
             infix_arena_alloc(affix->args_arena, infix_type_get_size(arg_type), infix_type_get_alignment(arg_type));
-        affix->push[i](aTHX_ arg_type, ST(i), c_arg_ptr);
+
+        if (out_params[i] && arg_type->category == INFIX_TYPE_POINTER) {
+            // This is an out-parameter.
+            const infix_type * pointee_type = arg_type->meta.pointer_info.pointee_type;
+            // Allocate space for the data (e.g., the int) in the arena.
+            void * data_ptr = infix_arena_alloc(
+                affix->args_arena, infix_type_get_size(pointee_type), infix_type_get_alignment(pointee_type));
+            // Initialize this C data from the Perl scalar's current value (for in/out params).
+            sv2ptr(aTHX_ out_params[i], data_ptr, pointee_type);
+            // The argument to the C function is the pointer to this data.
+            // The `cif` expects a pointer to the argument, so c_arg_ptr holds the pointer value.
+            *(void **)c_arg_ptr = data_ptr;
+        }
+        else
+            // Normal marshalling for all other cases.
+            affix->push[i](aTHX_ arg_type, arg_sv, c_arg_ptr);
+
         c_args[i] = c_arg_ptr;
     }
 
@@ -1071,6 +1112,22 @@ void Affix_trigger(pTHX_ CV * cv) {
         infix_arena_alloc(affix->ret_arena, infix_type_get_size(ret_type), infix_type_get_alignment(ret_type));
 
     affix->cif(ret_ptr, c_args);
+
+    // After the call, copy values back for any out-parameters
+    for (size_t i = 0; i < num_args; ++i) {
+        if (out_params[i]) {
+            const infix_type * arg_type = infix_forward_get_arg_type(affix->infix, i);
+            if (arg_type->category == INFIX_TYPE_POINTER) {
+                const infix_type * pointee_type = arg_type->meta.pointer_info.pointee_type;
+                // The pointer to the data is what was stored inside the argument buffer.
+                void * data_ptr = *(void **)c_args[i];
+                // Copy the (potentially modified) C data back to the Perl scalar.
+                ptr2sv(aTHX_ data_ptr, out_params[i], pointee_type);
+            }
+        }
+    }
+
+    safefree(out_params);
 
     SV * return_sv = affix->pull(aTHX_ ret_type, ret_ptr);
 

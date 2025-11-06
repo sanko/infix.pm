@@ -22,7 +22,7 @@ sub on_closing ( $window, $data ) {
     use Data::Dump;
     ddx [ $window, $data ];
     say "Window closing. Bye!";
-    LibUI::Quit();
+    LibUI::uiQuit();
     return 1;
 }
 
@@ -32,51 +32,60 @@ sub on_closing ( $window, $data ) {
 sub on_button_clicked ( $button, $label ) {
     state $count = 0;
     $count++;
-    LibUI::LabelSetText( $label, "You clicked the button $count time(s)!" );
+    LibUI::uiLabelSetText( $label, "You clicked the button $count time(s)!" );
 }
 
 # -- Main Program --
 # Initialize the library. An empty hash is fine for default options.
-my $init_error = LibUI::Init( \{ Size => 1024 } );
+my $init_error = LibUI::uiInit( \{ Size => 1024 } );
 die "Error initializing libui: $init_error" if $init_error;
 
 # Create the main window
-my $main_win = LibUI::NewWindow( "Hello World!", 400, 200, 1 );
-LibUI::WindowSetMargined( $main_win, 1 );    # Add padding around the edges
+my $main_win = LibUI::uiNewWindow( "Hello World!", 400, 200, 1 );
+LibUI::uiWindowSetMargined( $main_win, 1 );    # Add padding around the edges
 
 # Set up the closing callback
-LibUI::WindowOnClosing( $main_win, \&on_closing, undef );
+LibUI::uiWindowOnClosing( $main_win, \&on_closing, 'Bye' );
+LibUI::uiWindowOnContentSizeChanged(
+    $main_win,
+    sub ( $window, $etc ) {
+        my ( $w, $h );
+        LibUI::uiWindowContentSize( $main_win, \$w, \$h );
+        warn sprintf 'w: %d, h: %d', int $w, int $h;
+    },
+    'Bye'
+);
 
 # Create a vertical box to arrange widgets
-my $vbox = LibUI::NewVerticalBox();
-LibUI::BoxSetPadded( $vbox, 1 );
-LibUI::WindowSetChild( $main_win, $vbox );    # Add the box to the window
+my $vbox = LibUI::uiNewVerticalBox();
+LibUI::uiBoxSetPadded( $vbox, 1 );
+LibUI::uiWindowSetChild( $main_win, $vbox );    # Add the box to the window
 
 # Create a label
-my $label = LibUI::NewLabel("Welcome to libui-ng from Perl!");
-LibUI::BoxAppend( $vbox, $label, 0 );         # Add label to box, not stretchy
+my $label = LibUI::uiNewLabel("Welcome to libui-ng from Perl!");
+LibUI::uiBoxAppend( $vbox, $label, 0 );         # Add label to box, not stretchy
 
 # Create a button
-my $button = LibUI::NewButton("Click Me");
-LibUI::BoxAppend( $vbox, $button, 0 );        # Add button to box, not stretchy
+my $button = LibUI::uiNewButton("Click Me");
+LibUI::uiBoxAppend( $vbox, $button, 0 );        # Add button to box, not stretchy
 
 # Set up the button's click callback.
 # We pass a reference to the $label as the user data, so we can access it
 # inside the callback.
-LibUI::ButtonOnClicked( $button, \&on_button_clicked, $label );
+LibUI::uiButtonOnClicked( $button, \&on_button_clicked, $label );
 
 # Show the window and start the main event loop
-LibUI::ControlShow($main_win);
+LibUI::uiControlShow($main_win);
 #
-LibUI::Timer( 100, sub ($blah) { use Data::Dump; ddx $blah; return 0 }, \%ENV );
+LibUI::uiTimer( 100, sub ($blah) { use Data::Dump; ddx $blah; return 0 }, \%ENV );
 #
 use Data::Dump;
 ddx $main_win;
 warn $$main_win;
 
 #~ exit;
-LibUI::Main();
+LibUI::uiMain();
 
 # Clean up (this is only reached after uiQuit() is called)
-LibUI::Uninit();
+LibUI::uiUninit();
 say "Program finished cleanly.";
