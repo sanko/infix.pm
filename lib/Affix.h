@@ -29,6 +29,9 @@ typedef struct {
     /// Maps library path -> LibRegistryEntry*.
     /// This prevents reloading the same .so/.dll and manages its lifecycle.
     HV * lib_registry;
+    // NEW: A per-thread hash table to cache callback trampolines, preventing re-creation and leaks.
+    // Maps the memory address of a Perl CV* to its corresponding Implicit_Callback_Magic* struct.
+    HV * callback_registry;
     /// @brief Type alias for an infix type registry. Represents a collection of named types.
     infix_registry_t * registry;
 } my_cxt_t;
@@ -53,6 +56,13 @@ typedef void (*Affix_Push)(pTHX_ const infix_type *, SV *, void *);
 /// @brief Function pointer type for a "pull" operation: marshalling from C (void*) to Perl (SV).
 typedef SV * (*Affix_Pull)(pTHX_ const infix_type *, void *);
 
+// New struct for the pre-computed marshalling plan for out-parameters
+typedef struct {
+    size_t index;                     // The argument index
+    const infix_type * pointee_type;  // The type of data to write back (e.g., 'int' for an '*int')
+} OutParamInfo;
+
+
 /// @brief Represents a forward FFI call (a Perl sub that calls a C function).
 /// This struct is the "context" attached to the generated XS subroutine.
 typedef struct {
@@ -63,6 +73,9 @@ typedef struct {
     Affix_Push * push;             ///< An array of marshalling functions for the arguments (Perl -> C).
     Affix_Pull pull;               ///< A marshalling function for the return value (C -> Perl).
     infix_library_t * lib_handle;  ///< If affix() loaded a library itself, stores the handle for cleanup.
+    // Marshalling plan for out-parameters
+    OutParamInfo * out_param_info;
+    size_t num_out_params;
 } Affix;
 
 /// @brief Represents an Affix::Pin object, a blessed Perl scalar that wraps a raw C pointer.
@@ -76,15 +89,14 @@ typedef struct {
 
 /// @brief Holds the necessary data for a callback, specifically the Perl subroutine to call.
 typedef struct {
-    SV * perl_sub;   ///< A reference (RV) to the Perl coderef. We hold this to keep it alive.
-    dTHXfield(perl)  ///< The thread context in which the callback was created.
+    SV * coderef_rv;  ///< A reference (RV) to the Perl coderef. We hold this to keep it alive.
+    dTHXfield(perl)   ///< The thread context in which the callback was created.
 } Affix_Callback_Data;
 
 /// @brief Internal struct holding the C resources that are magically attached
 ///        to a user's coderef (CV*) when it is first used as a callback.
 typedef struct {
-    infix_reverse_t * reverse_ctx;        ///< Handle to the infix reverse-call trampoline.
-    Affix_Callback_Data * callback_data;  ///< Holds the SV* to the Perl coderef to keep it alive.
+    infix_reverse_t * reverse_ctx;  ///< Handle to the infix reverse-call trampoline.
 } Implicit_Callback_Magic;
 
 /// @brief An entry in the thread-local library registry hash.
@@ -120,7 +132,8 @@ int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg);
 bool is_pin(pTHX_ SV * sv);
 
 // The C function that gets called when a magically-promoted CV* is destroyed.
-int Affix_free_implicit_callback(pTHX_ SV * sv, MAGIC * mg);
+// NEW: This function is now OBSOLETE and can be removed.
+// int Affix_free_implicit_callback(pTHX_ SV * sv, MAGIC * mg);
 
 // Internal helper to safely get the Affix_Pin struct from a blessed SV.
 Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv);
