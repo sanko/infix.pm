@@ -5,6 +5,7 @@ use blib;
 use lib $Bin;
 use Carp qw[croak];
 use libui;
+$|++;
 #
 my $mem = Affix::malloc(1024);
 warn $mem;
@@ -77,7 +78,17 @@ LibUI::uiButtonOnClicked( $button, \&on_button_clicked, $label );
 # Show the window and start the main event loop
 LibUI::uiControlShow($main_win);
 #
-LibUI::uiTimer( 100, sub ($blah) { use Data::Dump; ddx $blah; return 0 }, \%ENV );
+LibUI::uiTimer(
+    10,
+    sub ($blah) {
+
+        #print '.';
+        use Data::Dump;
+        ddx $blah;
+        return 10;
+    },
+    \%ENV
+);
 #
 use Data::Dump;
 ddx $main_win;

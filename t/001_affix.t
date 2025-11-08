@@ -440,7 +440,9 @@ subtest 'Type Registry and Typedefs' => sub {
             return $struct_ref->{value} * 2;
         };
         is $harness1->( $struct_to_pass, $cb1 ), 11.0, 'Callback coderef received struct pointer and returned correct value';
-        isa_ok my $harness2 = wrap( $lib_path, 'check_returned_struct_from_cb', '( *(()->void)->@Point )->int32' ), ['Affix'];
+        isa_ok my $harness2 = wrap( $lib_path, 'check_returned_struct_from_cb', '( *(()->void  )->@Point )->int32' ), ['Affix'];
+
+        #~ isa_ok my $harness2 = wrap( $lib_path, 'check_returned_struct_from_cb', '( *((         )->@Point) )->int32' ), ['Affix'];
         is $harness2->(
             sub {
                 diag "Inside callback that will return a struct";

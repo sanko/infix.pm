@@ -95,8 +95,8 @@ package LibUI v1.0.0 {
     # Type Definitions
     typedef <<'END_TYPEDEFS';
     # Part 1: Opaque Handle Aliases
-    # Define a single, canonical opaque pointer for all widget handles.
-    @uiControl = *void;
+    @uiControl = *void;  # Define a single, canonical opaque pointer for all widget handles
+    @HeapString = *char; # New type for strings that must be freed by the caller
 
     # Alias all other widget types to the base uiControl type for consistency.
     @uiWindow = @uiControl;
@@ -218,7 +218,7 @@ END_TYPEDEFS
         uiQueueMain     => '(cb: *((@SV)->void), data: @SV)->void',
         uiTimer         => '(ms: int, cb: *((@SV)->int), data: @SV)->void',
         uiOnShouldQuit  => '(cb: *((@SV)->int), data: @SV)->void',
-        uiFreeText      => '(text: *char)->void',
+        uiFreeText      => '(text: @HeapString)->void',
 
         # Generic Control functions
         uiControlDestroy   => '(@uiControl)->void',
@@ -277,7 +277,7 @@ END_TYPEDEFS
         uiNewEntry         => '()->@uiEntry',
         uiNewPasswordEntry => '()->@uiEntry',
         uiNewSearchEntry   => '()->@uiEntry',
-        uiEntryText        => '(@uiEntry)->*char',
+        uiEntryText        => '(@uiEntry)->@HeapString',
         uiEntrySetText     => '(@uiEntry, *char)->void',
         uiEntryOnChanged   => '(@uiEntry, cb: * ((@uiEntry, @SV)->void), data: @SV)->void',
         uiEntryReadOnly    => '(@uiEntry)->int',
@@ -463,7 +463,7 @@ END_TYPEDEFS
         #~ warn $lib;
         #~ warn $name;
         #~ warn $sig;
-        push @EXPORT_OK, $as;
+        push @EXPORT_OK, $name;
     }
     #
     our %EXPORT_TAGS = ( all => \@EXPORT_OK );
