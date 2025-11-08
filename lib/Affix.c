@@ -125,8 +125,10 @@ XS_INTERNAL(Affix_get_last_error_message) {
     XSRETURN(1);
 }
 static MGVTBL Affix_pin_vtbl = {
-    Affix_get_pin, Affix_set_pin, nullptr, nullptr, Affix_free_pin, nullptr, nullptr, nullptr};
+    Affix_get_pin, Affix_set_pin, Affix_len_pin, nullptr, Affix_free_pin, nullptr, nullptr, nullptr};
 Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv) {
+    //~ warn("**************** Getting pin get_from_sv");
+
     if (!sv || !is_pin(aTHX_ sv))
         return nullptr;
     MAGIC * mg = mg_findext(SvRV(sv), PERL_MAGIC_ext, &Affix_pin_vtbl);
@@ -134,7 +136,31 @@ Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv) {
         return (Affix_Pin *)mg->mg_ptr;
     return nullptr;
 }
+
+int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg) {
+    //~ warn("**************** Getting pin set");
+
+    Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
+    if (!pin || !pin->pointer || !pin->type)
+        return 0;
+    sv2ptr(aTHX_ sv, pin->pointer, pin->type);
+    return 0;
+}
+
+U32 Affix_len_pin(pTHX_ SV * sv, MAGIC * mg) {
+    //~ warn("**************** Getting pin len");
+    Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
+    if (!pin || !pin->pointer || !pin->type) {
+        if (SvTYPE(sv) == SVt_PVAV)
+            return av_len(MUTABLE_AV(sv));
+        return sv_len(sv);
+    }
+    return pin->type->size;
+}
+
 int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg) {
+    //~ warn("**************** Getting pin free");
+
     PERL_UNUSED_VAR(sv);
     Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
     if (pin == nullptr)
@@ -148,6 +174,8 @@ int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg) {
     return 0;
 }
 int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg) {
+    //~ warn("**************** Getting pin get");
+
     Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
     if (!pin || !pin->type) {
         sv_setsv_mg(sv, &PL_sv_undef);
@@ -173,14 +201,10 @@ int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg) {
     ptr2sv(aTHX_ pin->pointer, sv, pin->type);
     return 0;
 }
-int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg) {
-    Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
-    if (!pin || !pin->pointer || !pin->type)
-        return 0;
-    sv2ptr(aTHX_ sv, pin->pointer, pin->type);
-    return 0;
-}
+
 bool is_pin(pTHX_ SV * sv) {
+    //~ warn("**************** Getting pin is");
+
     if (!sv || !SvOK(sv) || !SvROK(sv) || !SvMAGICAL(SvRV(sv)))
         return false;
     return mg_findext(SvRV(sv), PERL_MAGIC_ext, &Affix_pin_vtbl) != nullptr;
@@ -245,7 +269,7 @@ XS_INTERNAL(Affix_find_symbol) {
         SV * obj_data = newSV(0);
         sv_setiv(obj_data, PTR2IV(pin));
         SV * rv = newRV_inc(obj_data);
-        sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
+        //~ sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
         sv_magicext(obj_data, nullptr, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
         ST(0) = sv_2mortal(rv);
         XSRETURN(1);
@@ -609,7 +633,7 @@ SV * pull_pointer(pTHX_ const infix_type * type, void * ptr) {
         SV * obj_data = newSV(0);
         sv_setiv(obj_data, PTR2IV(pin));
         SV * rv = newRV_noinc(obj_data);
-        sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
+        //~ sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
         sv_magicext(obj_data, NULL, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
         return rv;
     }
@@ -635,7 +659,7 @@ SV * pull_pointer(pTHX_ const infix_type * type, void * ptr) {
     SV * obj_data = newSV(0);
     sv_setiv(obj_data, PTR2IV(pin));
     SV * rv = newRV_noinc(obj_data);
-    sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
+    //~ sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
     sv_magicext(obj_data, NULL, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
     return rv;
 }
@@ -1307,7 +1331,7 @@ XS_INTERNAL(Affix_sv_dump) {
 static SV * _new_pointer_obj(pTHX_ Affix_Pin * pin) {
     SV * data_sv = newSV(0);
     SV * rv = newRV_inc(data_sv);
-    sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
+    //~ sv_bless(rv, gv_stashpv("Affix::Pointer", GV_ADD));
     sv_setiv(data_sv, PTR2IV(pin));
     _pin_sv(aTHX_ data_sv, pin->type, pin->pointer, true);
     return rv;
@@ -1373,19 +1397,19 @@ XS_INTERNAL(Affix_calloc) {
     ST(0) = sv_2mortal(_new_pointer_obj(aTHX_ pin));
     XSRETURN(1);
 }
-XS_INTERNAL(Affix_Pointer_realloc) {
+XS_INTERNAL(Affix_realloc) {
     dXSARGS;
     if (items != 2)
         croak_xs_usage(cv, "self, new_size");
     Affix_Pin * pin = _get_pin_from_sv(aTHX_ ST(0));
     if (!pin || !pin->managed)
-        croak("Can only realloc a managed Affix::Pointer");
+        croak("Can only realloc a managed pointer");
     UV new_size = SvUV(ST(1));
     void * new_ptr = saferealloc(pin->pointer, new_size);
     pin->pointer = new_ptr;
     XSRETURN_YES;
 }
-XS_INTERNAL(Affix_Pointer_free) {
+XS_INTERNAL(Affix_free) {
     dXSARGS;
     if (items != 1)
         croak_xs_usage(cv, "pointer_object");
@@ -1402,14 +1426,14 @@ XS_INTERNAL(Affix_Pointer_free) {
     }
     XSRETURN_YES;
 }
-XS_INTERNAL(Affix_Pointer_cast) {
+XS_INTERNAL(Affix_cast) {
     dXSARGS;
     dMY_CXT;
     if (items != 2)
         croak_xs_usage(cv, "self, new_type_signature");
     Affix_Pin * pin = _get_pin_from_sv(aTHX_ ST(0));
     if (!pin)
-        croak("Argument is not an Affix::Pointer object");
+        croak("Argument is not a pointer");
     const char * signature = SvPV_nolen(ST(1));
     infix_type * new_type = NULL;
     infix_arena_t * parse_arena = NULL;
@@ -1426,13 +1450,15 @@ XS_INTERNAL(Affix_Pointer_cast) {
     ST(0) = ST(0);
     XSRETURN(1);
 }
-XS_INTERNAL(Affix_Pointer_dump) {
+XS_INTERNAL(Affix_dump) {
+    // TODO: Make this look for the pinned var's type and use sizeof calc from infix
+    dVAR;
     dXSARGS;
     if (items != 2)
         croak_xs_usage(cv, "self, length_in_bytes");
     Affix_Pin * pin = _get_pin_from_sv(aTHX_ ST(0));
     if (!pin)
-        croak("self is not a valid Affix::Pointer object");
+        croak("self is not a valid pointer");
     if (!pin->pointer) {
         warn("Cannot dump a NULL pointer");
         XSRETURN_EMPTY;
@@ -1442,41 +1468,11 @@ XS_INTERNAL(Affix_Pointer_dump) {
         warn("Dump length cannot be zero");
         XSRETURN_EMPTY;
     }
-    _DumpHex(aTHX_ pin->pointer, length, "Affix::Pointer::dump()", 0);
+    _DumpHex(aTHX_ pin->pointer, length, OutCopFILE(PL_curcop), CopLINE(PL_curcop));
     ST(0) = ST(0);
     XSRETURN(1);
 }
-XS_INTERNAL(Affix_Pointer_as_string) {
-    dXSARGS;
-    if (items != 1)
-        croak_xs_usage(cv, "self");
-    Affix_Pin * pin = _get_pin_from_sv(aTHX_ ST(0));
-    if (!pin) {
-        ST(0) = sv_2mortal(newSVpv("Affix::Pointer(INVALID)", 0));
-        XSRETURN(1);
-    }
-    char type_sig_buffer[512] = "???";
-    if (pin->type)
-        (void)infix_type_print(type_sig_buffer, sizeof(type_sig_buffer), pin->type, INFIX_DIALECT_SIGNATURE);
-    if (pin->pointer == NULL)
-        ST(0) = sv_2mortal(newSVpvf("Affix::Pointer(type='%s', addr=NULL)", type_sig_buffer));
-    else
-        ST(0) = sv_2mortal(newSVpvf("Affix::Pointer(type='%s', addr=%p)", type_sig_buffer, pin->pointer));
-    XSRETURN(1);
-}
-XS_INTERNAL(Affix_Pointer_DESTROY) {
-    dXSARGS;
-    if (items != 1)
-        XSRETURN_EMPTY;
-    Affix_Pin * pin = _get_pin_from_sv(aTHX_ ST(0));
-    if (!pin)
-        XSRETURN_EMPTY;
-    if (pin->managed && pin->pointer) {
-        safefree(pin->pointer);
-        pin->pointer = NULL;
-    }
-    XSRETURN_EMPTY;
-}
+
 void boot_Affix(pTHX_ CV * cv) {
     dXSBOOTARGSXSAPIVERCHK;
     PERL_UNUSED_VAR(items);
@@ -1518,21 +1514,14 @@ void boot_Affix(pTHX_ CV * cv) {
     (void)newXSproto_portable("Affix::sv_dump", Affix_sv_dump, __FILE__, "$");
     {
         (void)newXSproto_portable("Affix::malloc", Affix_malloc, __FILE__, "$");
-        newXS("Affix::calloc", Affix_calloc, __FILE__);
-        newXS("Affix::free", Affix_Pointer_free, __FILE__);
-        (void)newXSproto_portable("Affix::Pointer::realloc", Affix_Pointer_realloc, __FILE__, "$$");
-        (void)newXSproto_portable("Affix::Pointer::free", Affix_Pointer_free, __FILE__, "$");
-        (void)newXSproto_portable("Affix::Pointer::cast", Affix_Pointer_cast, __FILE__, "$$");
-        (void)newXSproto_portable("Affix::Pointer::dump", Affix_Pointer_dump, __FILE__, "$$");
-        (void)newXSproto_portable("Affix::Pointer::DESTROY", Affix_Pointer_DESTROY, __FILE__, "$;$");
-        sv_setsv(get_sv("Affix::Pointer::()", TRUE), &PL_sv_yes);
-        (void)newXSproto_portable("Affix::Pointer::()", Affix_Pointer_as_string, __FILE__, "$;@");
+        (void)newXSproto_portable("Affix::calloc", Affix_calloc, __FILE__, "$$");
+        (void)newXSproto_portable("Affix::realloc", Affix_realloc, __FILE__, "$$");
+        (void)newXSproto_portable("Affix::free", Affix_free, __FILE__, "$");
+        (void)newXSproto_portable("Affix::cast", Affix_cast, __FILE__, "$$");
+        (void)newXSproto_portable("Affix::dump", Affix_dump, __FILE__, "$$");
         export_function("Affix", "malloc", "mem");
         export_function("Affix", "calloc", "mem");
         export_function("Affix", "free", "mem");
-        export_function("Affix", "malloc", "all");
-        export_function("Affix", "calloc", "all");
-        export_function("Affix", "free", "all");
     }
     Perl_xs_boot_epilog(aTHX_ ax);
 }

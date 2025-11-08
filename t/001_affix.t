@@ -273,9 +273,8 @@ subtest 'Library Loading and Lifecycle' => sub {
     is get_last_error_message(), D(),   'get_last_error_message provides a useful error on failed load';
 };
 subtest 'Symbol Finding' => sub {
-    my $lib    = load_library($lib_path);
-    my $symbol = find_symbol( $lib, 'add' );
-    isa_ok $symbol, ['Affix::Pointer'], 'find_symbol returns an Affix::Pointer object';
+    ok my $lib    = load_library($lib_path),    'load_library returns a pointer';
+    ok my $symbol = find_symbol( $lib, 'add' ), 'find_symbol returns a pointer';
     is find_symbol( $lib, 'non_existent_symbol_12345' ), U(), 'find_symbol returns undef for a non-existent symbol';
 };
 subtest 'Pinning and Marshalling (Dereferencing)' => sub {

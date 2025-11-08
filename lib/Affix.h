@@ -128,6 +128,7 @@ void _pin_sv(pTHX_ SV * sv, const infix_type * type, void * pointer, bool manage
 // Functions implementing the "magic" for Affix::Pin objects (for dereferencing).
 int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg);
 int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg);
+U32 Affix_len_pin(pTHX_ SV * sv, MAGIC * mg);
 int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg);
 bool is_pin(pTHX_ SV * sv);
 
