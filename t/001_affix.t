@@ -257,6 +257,34 @@ DLLEXPORT int call_int_cb(int (*cb)(int), int val) {
 DLLEXPORT double call_math_cb(double (*cb)(double, int), double d, int i) {
     return cb(d, i);
 }
+
+DLLEXPORT int sum_int_array(int* arr, int count) {
+    int total = 0;
+    for (int i = 0; i < count; i++)
+        total += arr[i];
+    return total;
+}
+
+DLLEXPORT int sum_point_by_val(Point p) {
+    return p.x + p.y;
+}
+
+DLLEXPORT char get_char_at(char s[20], int index) {
+    if (index >= 20 || index < 0) return '!';
+    return s[index];
+}
+
+DLLEXPORT int read_union_int(MyUnion u) {
+    return u.i;
+}
+
+DLLEXPORT float sum_float_array(float* arr, int len) {
+    float total = 0.0f;
+    for (int i = 0; i < len; i++)
+        total += arr[i];
+    return total;
+}
+
 END_C
 
 # Compile the library once for all subtests that need it.
@@ -400,7 +428,8 @@ subtest 'Type Registry and Typedefs' => sub {
     note 'Defining named types for subsequent tests.';
     ok typedef(<<''), 'Successfully defined multiple types using typedef';
     @Point    = { x: int32, y: int32 };
-    @Rect     = { top_left: @Point, bottom_right: @Point, name: *char };
+    @Rect     = { top_left: @Point, bottom_right: @Point};
+    @RectPlus = { top_left: @Point, bottom_right: @Point, name: *char };
     @MyStruct = { id: int32, value: float64, label: *char };
     @MyUnion  = < i:int32, f:float32, c:[8:char] >;
 
@@ -423,7 +452,7 @@ subtest 'Type Registry and Typedefs' => sub {
     };
     subtest 'Forward Calls: Nested Structs and By-Value Returns (with Typedefs)' => sub {
         plan 4;
-        isa_ok my $get_width = wrap( $lib_path, 'get_rect_width', '(*@Rect)->int32' ), ['Affix'];
+        isa_ok my $get_width = wrap( $lib_path, 'get_rect_width', '(*@RectPlus)->int32' ), ['Affix'];
         is $get_width->( \{ top_left => { x => 10, y => 20 }, bottom_right => { x => 60, y => 80 }, name => 'My Rectangle' } ), 50,
             'Correctly passed nested struct and calculated width';
         isa_ok my $create_point = wrap( $lib_path, 'create_point', '(int32, int32)->@Point' ), ['Affix'];
@@ -431,7 +460,6 @@ subtest 'Type Registry and Typedefs' => sub {
         is $point, { x => 123, y => 456 }, 'Correctly received a struct returned by value';
     };
     subtest 'Advanced Callbacks (Reverse FFI) (with Typedefs)' => sub {
-        plan 4;
         diag 'Testing callbacks that send and receive structs by passing coderefs directly.';
         isa_ok my $harness1 = wrap( $lib_path, 'process_struct_with_cb', '(*@MyStruct, (*(@MyStruct))->float64)->float64' ), ['Affix'];
         my $struct_to_pass = { id => 100, value => 5.5, label => 'Callback Struct' };
@@ -444,11 +472,107 @@ subtest 'Type Registry and Typedefs' => sub {
         #~ isa_ok my $harness2 = wrap( $lib_path, 'check_returned_struct_from_cb', '( *((         )->@Point) )->int32' ), ['Affix'];
         is $harness2->(
             sub {
-                diag "Inside callback that will return a struct";
+                pass "Inside callback that will return a struct";
                 return { x => 70, y => 30 };
             }
             ),
             100, 'C code correctly received a struct returned by value from a Perl callback';
     };
 };
+subtest 'sizeof Operator' => sub {
+
+    # From typedef: @Rect = { a: @Point, b: @Point }; @Point = {x:int32, y:int32}
+    my $size_of_int = sizeof('int32');
+    is( sizeof('@Rect'), $size_of_int * 4, 'sizeof works correctly on complex named types' );
+};
+subtest 'Memory Management (malloc, calloc, free)' => sub {
+    my $ptr = malloc(32);
+    ok $ptr, 'malloc returns a pinned SV*';
+    use Data::Printer;
+    p $ptr;
+    diag length $ptr;
+    diag Affix::dump( $ptr, 32 );
+    ok my $array_ptr = calloc( 4, 'int' ), 'calloc returns an array';
+    diag Affix::dump( $array_ptr, 32 );
+    ok $array_ptr, 'calloc returns an Affix::Pointer object';
+    ok affix $lib_path, 'sum_int_array', '(*int, int)->int';
+    is sum_int_array( $array_ptr, 4 ), 0, 'Memory from calloc is zero-initialized';
+    ok free($array_ptr), 'Explicitly calling free() returns true';
+
+    # Note: Double-free would crash, so we assume it worked.
+    like( dies { free( find_symbol( load_library($lib_path), 'sum_int_array' ) ) },
+        qr/unmanaged/, 'free() croaks when called on an unmanaged pointer' );
+
+    # Test that auto-freeing via garbage collection doesn't crash
+    subtest 'GC of managed pointers' => sub {
+        ok my $scoped_ptr = malloc(16), 'malloc(16)';
+
+        #~ ok cast( $scoped_ptr, '*int'), 'cast void pointer to int pointer';
+        #substr $$scoped_ptr, 0, 1, 'a';
+        diag '[' . ($$scoped_ptr) . ']';
+        my $values = $$scoped_ptr;
+        substr( $values, 4 ) = 'hi';
+        $$scoped_ptr = $values;
+        Affix::dump( $scoped_ptr, 32 );
+        diag '[' . ($$scoped_ptr) . ']';
+
+        # When $scoped_ptr goes out of scope here, its DESTROY method is called.
+    };
+    pass('Managed pointer went out of scope without crashing');
+};
+subtest 'Affix::Pointer Methods (cast, realloc, deref)' => sub {
+    affix $lib_path, 'read_int_from_void_ptr', '(*void)->int';
+    my $mem = malloc(8);
+    Affix::cast( $mem, '*int' );
+
+    # Test magical 'set' via dereferencing
+    ${$mem} = 42;
+    is( read_int_from_void_ptr($mem), 42, 'Magical set via deref wrote to C memory' );
+
+    # Test cast again
+    Affix::cast( $mem, '*longlong' );
+    $$mem = 1234567890123;
+    is $$mem, 1234567890123, 'Magical get after casting to a new type works';
+
+    # Test realloc
+    my $r_ptr = calloc( 2, 'int' );
+    Affix::realloc( $r_ptr, 32 );    # Reallocate to hold 8 ints
+    Affix::cast( $r_ptr, '[8:int]' );
+
+    # 1. READ the entire array from C into a Perl variable
+    my $array_values = $$r_ptr;
+
+    # 2. MODIFY the Perl copy
+    $array_values->[0] = 10;
+    $array_values->[7] = 80;
+
+    # 3. WRITE the entire modified Perl array back to the C pointer
+    $$r_ptr = $array_values;
+
+    # --- End of Corrected Logic ---
+    # Now, the C memory has actually been updated. The rest of the test will work.
+    Affix::dump( $r_ptr, 32 );
+    is( sum_int_array( $r_ptr, 8 ), 90, 'realloc successfully resized memory' );
+};
+subtest 'Advanced Structs and Unions' => sub {
+    affix $lib_path, 'sum_point_by_val', '(@Point)->int';
+    my $point_hash = { x => 10, y => 25 };
+    is( sum_point_by_val($point_hash), 35, 'Correctly passed a struct by value' );
+    affix $lib_path, 'read_union_int', '(@MyUnion)->int';
+    my $union_hash = { i => 999 };
+    is( read_union_int($union_hash), 999, 'Correctly read int member from a C union' );
+};
+subtest 'Advanced Arrays' => sub {
+    affix $lib_path, 'get_char_at', '([20:char], int)->char';
+    my $str = "Perl";
+    is( chr( get_char_at( $str, 0 ) ), 'P', 'Passing string to char[N] works (char 0)' );
+    is( get_char_at( $str, 4 ),        0,   'Passing string to char[N] is null-terminated' );
+    my $long_str = "This is a very long string that will be truncated";
+    is( chr( get_char_at( $long_str, 18 ) ), 'g', 'Truncated string char 18 is correct' );
+    is( get_char_at( $long_str, 19 ),        0,   'Truncated string is null-terminated at the boundary' );
+    ok affix( $lib_path, 'sum_float_array', '(*float, int)->float' ), 'affix sum_float_array';
+    my $floats = [ 1.1, 2.2, 3.3 ];
+    is( sum_float_array( $floats, 3 ), float( 6.6, tolerance => 0.01 ), 'Correctly summed an array of floats' );
+};
+#
 done_testing;

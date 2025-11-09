@@ -18,7 +18,6 @@
 #define infix_free safefree
 #define infix_realloc saferealloc
 
-// This include order is critical. We need Perl's types defined first.
 #include "common/infix_internals.h"
 #include <infix/infix.h>
 
@@ -29,7 +28,7 @@ typedef struct {
     /// Maps library path -> LibRegistryEntry*.
     /// This prevents reloading the same .so/.dll and manages its lifecycle.
     HV * lib_registry;
-    // NEW: A per-thread hash table to cache callback trampolines, preventing re-creation and leaks.
+    // A per-thread hash table to cache callback trampolines, preventing re-creation and leaks.
     // Maps the memory address of a Perl CV* to its corresponding Implicit_Callback_Magic* struct.
     HV * callback_registry;
     /// @brief Type alias for an infix type registry. Represents a collection of named types.
@@ -51,21 +50,22 @@ START_MY_CXT;
 #define dTHXfield(var)
 #endif
 
-/// @brief Function pointer type for a "push" operation: marshalling from Perl (SV) to C (void*).
-typedef void (*Affix_Push)(pTHX_ const infix_type *, SV *, void *);
-/// @brief Function pointer type for a "pull" operation: marshalling from C (void*) to Perl (SV).
-typedef SV * (*Affix_Pull)(pTHX_ const infix_type *, void *);
+// Forward-declare the Affix struct so the typedef can see it.
+typedef struct Affix Affix;
 
-// New struct for the pre-computed marshalling plan for out-parameters
+/// @brief Function pointer type for a "push" operation: marshalling from Perl (SV) to C (void*).
+typedef void (*Affix_Push)(pTHX_ Affix *, const infix_type *, SV *, void *);
+/// @brief Function pointer type for a "pull" operation: marshalling from C (void*) to Perl (SV).
+typedef SV * (*Affix_Pull)(pTHX_ Affix *, const infix_type *, void *);
+
 typedef struct {
     size_t index;                     // The argument index
     const infix_type * pointee_type;  // The type of data to write back (e.g., 'int' for an '*int')
 } OutParamInfo;
 
-
 /// @brief Represents a forward FFI call (a Perl sub that calls a C function).
 /// This struct is the "context" attached to the generated XS subroutine.
-typedef struct {
+struct Affix {
     infix_forward_t * infix;       ///< Handle to the infix trampoline and type info.
     infix_arena_t * args_arena;    ///< Fast memory allocator for arguments during a call.
     infix_arena_t * ret_arena;     ///< Fast memory allocator for return value during a call.
@@ -76,7 +76,7 @@ typedef struct {
     // Marshalling plan for out-parameters
     OutParamInfo * out_param_info;
     size_t num_out_params;
-} Affix;
+};
 
 /// @brief Represents an Affix::Pin object, a blessed Perl scalar that wraps a raw C pointer.
 typedef struct {
@@ -91,7 +91,8 @@ typedef struct {
 /// @brief Holds the necessary data for a callback, specifically the Perl subroutine to call.
 typedef struct {
     SV * coderef_rv;  ///< A reference (RV) to the Perl coderef. We hold this to keep it alive.
-    dTHXfield(perl)   ///< The thread context in which the callback was created.
+    // jmp_buf * exception_handler;  ///< Pointer to the jmp_buf on the C stack.
+    dTHXfield(perl)  ///< The thread context in which the callback was created.
 } Affix_Callback_Data;
 
 /// @brief Internal struct holding the C resources that are magically attached
@@ -106,23 +107,24 @@ typedef struct {
     UV ref_count;           ///< Reference count. The library is closed only when this reaches 0.
 } LibRegistryEntry;
 
-SV * pull_struct(pTHX_ const infix_type * type, void * p);
-SV * pull_union(pTHX_ const infix_type * type, void * p);
-SV * pull_array(pTHX_ const infix_type * type, void * p);
-void push_reverse_trampoline(pTHX_ const infix_type * type, SV * sv, void * p);
-SV * pull_reverse_trampoline(pTHX_ const infix_type * type, void * p);
-SV * pull_enum(pTHX_ const infix_type * type, void * p);
-SV * pull_complex(pTHX_ const infix_type * type, void * p);
-SV * pull_vector(pTHX_ const infix_type * type, void * p);
+// Function Prototypes
+SV * pull_struct(pTHX_ Affix *, const infix_type * type, void * p);
+SV * pull_union(pTHX_ Affix *, const infix_type * type, void * p);
+SV * pull_array(pTHX_ Affix *, const infix_type * type, void * p);
+void push_reverse_trampoline(pTHX_ Affix *, const infix_type * type, SV * sv, void * p);
+SV * pull_reverse_trampoline(pTHX_ Affix *, const infix_type * type, void * p);
+SV * pull_enum(pTHX_ Affix *, const infix_type * type, void * p);
+SV * pull_complex(pTHX_ Affix *, const infix_type * type, void * p);
+SV * pull_vector(pTHX_ Affix *, const infix_type * type, void * p);
 
 // The C function that gets executed when an affixed Perl sub is called.
 extern void Affix_trigger(pTHX_ CV *);
 // Marshals a C value from a pointer into an existing Perl SV.
-void ptr2sv(pTHX_ void * c_ptr, SV * perl_sv, const infix_type * type);
+void ptr2sv(pTHX_ Affix * affix, void * c_ptr, SV * perl_sv, const infix_type * type);
 // Marshals a Perl SV's value into a C pointer.
-void sv2ptr(pTHX_ SV * perl_sv, void * c_ptr, const infix_type * type);
+void sv2ptr(pTHX_ Affix * affix, SV * perl_sv, void * c_ptr, const infix_type * type);
 // Marshals a Perl HASH ref into a C struct.
-void push_struct(pTHX_ const infix_type * type, SV * sv, void * p);
+void push_struct(pTHX_ Affix * affix, const infix_type * type, SV * sv, void * p);
 // Attaches a pin to a raw SV, making it magical.
 void _pin_sv(pTHX_ SV * sv, const infix_type * type, void * pointer, bool managed);
 
@@ -132,10 +134,6 @@ int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg);
 U32 Affix_len_pin(pTHX_ SV * sv, MAGIC * mg);
 int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg);
 bool is_pin(pTHX_ SV * sv);
-
-// The C function that gets called when a magically-promoted CV* is destroyed.
-// NEW: This function is now OBSOLETE and can be removed.
-// int Affix_free_implicit_callback(pTHX_ SV * sv, MAGIC * mg);
 
 // Internal helper to safely get the Affix_Pin struct from a blessed SV.
 Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv);

@@ -35,7 +35,7 @@ sub on_button_clicked ( $button, $label ) {
     LibUI::uiLabelSetText( $label, "You clicked the button $count time(s)!" );
 }
 
-# -- Main Program --
+# Main Program
 # Initialize the library. An empty hash is fine for default options.
 my $init_error = LibUI::uiInit( \{ Size => 1024 } );
 die "Error initializing libui: $init_error" if $init_error;
