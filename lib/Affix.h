@@ -85,6 +85,7 @@ typedef struct {
     infix_arena_t * type_arena;  ///< Memory arena that owns the 'type' structure.
     bool managed;                ///< If true, Perl owns the 'pointer' and will safefree() it on DESTROY.
     UV ref_count;                ///< Refcount to prevent premature freeing when SVs are copied.
+    size_t size;                 ///< Size of malloc'd void pointers.
 } Affix_Pin;
 
 /// @brief Holds the necessary data for a callback, specifically the Perl subroutine to call.

@@ -42,9 +42,13 @@ subtest 'Memory Management (malloc, calloc, free)' => sub {
         ok my $scoped_ptr = malloc(16), 'malloc(16)';
 
         #~ ok cast( $scoped_ptr, '*int'), 'cast void pointer to int pointer';
-        #~ ${$scoped_ptr} = 99;    # Write to it to make sure it's valid
+        #substr $$scoped_ptr, 0, 1, 'a';
+        diag '[' . ($$scoped_ptr) . ']';
+        my $values = $$scoped_ptr;
+        substr( $values, 4 ) = 'hi';
+        $$scoped_ptr = $values;
         Affix::dump( $scoped_ptr, 32 );
-        diag '[' . $scoped_ptr . ']';
+        diag '[' . ($$scoped_ptr) . ']';
 
         # When $scoped_ptr goes out of scope here, its DESTROY method is called.
     };

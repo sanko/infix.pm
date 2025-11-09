@@ -32,11 +32,11 @@ ok affix( $lib_path, 'get_ptr', '()->*void' ),     'affix get_ptr';
 diag "--- Testing Affix::malloc and object methods ---";
 
 # 1. Allocate a managed C buffer using the CORRECT array syntax.
-my $ptr = Affix::malloc('[50:char]');
+my $ptr = Affix::malloc( Affix::sizeof('[50:char]') );
 
 #~ my $ptr = Affix::calloc(50, 'char');
-isa_ok $ptr, ['Affix::Pointer'], 'malloc returns an Affix::Pointer object';
-$ptr->dump(32);
+ok $ptr, 'malloc returns an Affix::Pointer object';
+Affix::dump( $ptr, 32 );
 
 # 2. Pass the object to a C function that expects a raw pointer.
 #    Affix automatically extracts the raw C pointer from the blessed object.

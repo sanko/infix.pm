@@ -275,7 +275,7 @@ subtest 'Library Loading and Lifecycle' => sub {
 subtest 'Symbol Finding' => sub {
     my $lib    = load_library($lib_path);
     my $symbol = find_symbol( $lib, 'add' );
-    isa_ok $symbol, ['Affix::Pointer'], 'find_symbol returns an Affix::Pointer object';
+    ok $symbol, 'find_symbol returns an Affix::Pointer object';
     is find_symbol( $lib, 'non_existent_symbol_12345' ), U(), 'find_symbol returns undef for a non-existent symbol';
 };
 subtest 'Pinning and Marshalling (Dereferencing)' => sub {

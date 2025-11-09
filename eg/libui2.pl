@@ -12,7 +12,6 @@ warn $mem;
 warn $$mem;
 use Data::Dump;
 ddx $mem;
-$mem->free;
 
 #~ exit;
 # Callbacks
