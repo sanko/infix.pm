@@ -50,30 +50,59 @@ START_MY_CXT;
 #define dTHXfield(var)
 #endif
 
-// Forward-declare the Affix struct so the typedef can see it.
+// Forward-declare the primary structures.
 typedef struct Affix Affix;
+typedef struct Affix_Plan_Step Affix_Plan_Step;
 
-/// @brief Function pointer type for a "push" operation: marshalling from Perl (SV) to C (void*).
-typedef void (*Affix_Push)(pTHX_ Affix *, const infix_type *, SV *, void *);
 /// @brief Function pointer type for a "pull" operation: marshalling from C (void*) to Perl (SV).
+/// This is re-used by the new execution plan for the final return value step.
 typedef SV * (*Affix_Pull)(pTHX_ Affix *, const infix_type *, void *);
 
+/**
+ * @brief The single, homogeneous function pointer signature for all steps in the execution plan.
+ * @param pTHX_ The Perl interpreter context.
+ * @param affix The main Affix context object.
+ * @param step A pointer to the current plan step, containing its pre-calculated data.
+ * @param perl_stack_frame A pointer to the base of the Perl stack frame (&ST(0)).
+ * @param c_args The array of pointers to be passed to the C function.
+ * @param ret_buffer A pointer to the memory allocated for the C function's return value.
+ */
+typedef void (*Affix_Step_Executor)(
+    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer);
+
+/// @brief Stores the pre-calculated information needed to write back an "out" parameter.
 typedef struct {
-    size_t index;                     // The argument index
-    const infix_type * pointee_type;  // The type of data to write back (e.g., 'int' for an '*int')
+    size_t perl_stack_index;          // Index of the SV* in the perl_stack_frame
+    const infix_type * pointee_type;  // The type of the data pointed to (e.g., 'int' for 'int*')
 } OutParamInfo;
 
+/// @brief The data payload for a single step in the execution plan.
+typedef struct {
+    const infix_type * type;  // Type info for this step (arg or ret).
+    size_t index;             // Index into perl_stack_frame for args, or c_args for out-params.
+    Affix_Pull pull_handler;  // Pre-resolved pull handler for the return step.
+} Affix_Step_Data;
+
+/// @brief A single step in the pre-compiled execution plan.
+struct Affix_Plan_Step {
+    Affix_Step_Executor executor;  // Function pointer to the executor for this step.
+    Affix_Step_Data data;          // Pre-calculated data needed by the executor.
+};
+
 /// @brief Represents a forward FFI call (a Perl sub that calls a C function).
-/// This struct is the "context" attached to the generated XS subroutine.
+/// This struct holds the pre-compiled execution plan and is attached to the generated XS subroutine.
 struct Affix {
     infix_forward_t * infix;       ///< Handle to the infix trampoline and type info.
     infix_arena_t * args_arena;    ///< Fast memory allocator for arguments during a call.
     infix_arena_t * ret_arena;     ///< Fast memory allocator for return value during a call.
     infix_cif_func cif;            ///< A direct function pointer to the JIT-compiled trampoline code.
-    Affix_Push * push;             ///< An array of marshalling functions for the arguments (Perl -> C).
-    Affix_Pull pull;               ///< A marshalling function for the return value (C -> Perl).
     infix_library_t * lib_handle;  ///< If affix() loaded a library itself, stores the handle for cleanup.
-    // Marshalling plan for out-parameters
+    SV * return_sv;                ///< Temporary storage for the return SV created by the plan.
+
+    Affix_Plan_Step * plan;  ///< The linear array of operations (the "execution plan").
+    size_t plan_length;      ///< The total number of steps in the plan.
+
+    // Pre-compiled plan for handling "out" parameters after the C call.
     OutParamInfo * out_param_info;
     size_t num_out_params;
 };
@@ -91,8 +120,7 @@ typedef struct {
 /// @brief Holds the necessary data for a callback, specifically the Perl subroutine to call.
 typedef struct {
     SV * coderef_rv;  ///< A reference (RV) to the Perl coderef. We hold this to keep it alive.
-    // jmp_buf * exception_handler;  ///< Pointer to the jmp_buf on the C stack.
-    dTHXfield(perl)  ///< The thread context in which the callback was created.
+    dTHXfield(perl)   ///< The thread context in which the callback was created.
 } Affix_Callback_Data;
 
 /// @brief Internal struct holding the C resources that are magically attached
@@ -107,11 +135,10 @@ typedef struct {
     UV ref_count;           ///< Reference count. The library is closed only when this reaches 0.
 } LibRegistryEntry;
 
-// Function Prototypes
+// Function Prototypes for pull handlers (re-used in the execution plan).
 SV * pull_struct(pTHX_ Affix *, const infix_type * type, void * p);
 SV * pull_union(pTHX_ Affix *, const infix_type * type, void * p);
 SV * pull_array(pTHX_ Affix *, const infix_type * type, void * p);
-void push_reverse_trampoline(pTHX_ Affix *, const infix_type * type, SV * sv, void * p);
 SV * pull_reverse_trampoline(pTHX_ Affix *, const infix_type * type, void * p);
 SV * pull_enum(pTHX_ Affix *, const infix_type * type, void * p);
 SV * pull_complex(pTHX_ Affix *, const infix_type * type, void * p);

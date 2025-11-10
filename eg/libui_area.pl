@@ -42,7 +42,7 @@ sub handler_draw ( $handler, $area, $params ) {
 }
 
 # --- Main Program ---
-die "Failed to init LibUI" if uiInit( { Size => 0 } );
+die "Failed to init LibUI" if uiInit( \{ Size => 0 } );
 
 # Define the color for the bar that the slider will control
 $selected_point_color = { Type => LibUI::uiDrawBrushTypeSolid, R => 0.8, G => 0.2, B => 0.1, A => 1.0, };
