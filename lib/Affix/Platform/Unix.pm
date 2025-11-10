@@ -17,13 +17,31 @@ package Affix::Platform::Unix 0.5 {
     }
 
     sub _findLib_ldconfig ($name) {
-        my $machine = {
+
+        # Get the first part of the architecture name (e.g., "x86_64" from "x86_64-linux-gnu")
+        my ($arch_part)  = split /-/, $Config{archname};
+        my $architecture = {
+            'x86_64'  => 'x86_64',
+            'amd64'   => 'x86_64',    # A common alias
+            'aarch64' => 'ARM64',
+            'ppc64'   => 'PPC64',
+            'sparc64' => 'SPARC64',
+            'ia64'    => 'Itanium',
+        }->{$arch_part};
+        $architecture // die "Unsupported architecture for ldconfig lookup: $arch_part";
+
+        # Use the portable $Config{longsize} which gives the size of a C long in bytes.
+        my $lookup_key = $architecture . ( $Config{longsize} == 8 ? '-64' : '-32' );
+        my $machine    = {
             'x86_64-64'  => 'libc6,x86-64',
             'PPC64-64'   => 'libc6,64bit',
             'SPARC64-64' => 'libc6,64bit',
             'Itanium-64' => 'libc6,IA-64',
             'ARM64-64'   => 'libc6,AArch64'
-        }->{ Affix::Platform::Architecture() . ( Affix::Platform::SIZEOF_LONG() == 4 ? '-32' : '-64' ) };
+        }->{$lookup_key};
+
+        # If this specific architecture/bitness combination isn't in our list, return nothing.
+        $machine // return;
 
         # XXX assuming GLIBC's ldconfig (with option -p)
         grep { is_elf($_) } map {
