@@ -288,7 +288,7 @@ use %s;
         #~ warn join ', ', @dirs;
         #~ warn join ', ', @parts;
         #~ warn $lib_file;
-        use Data::Dump;
+        #~ use Data::Dump;
         my $data = {
             extra_linker_flags => ( $ldflags . ' -Lbuild_lib ' . ( $has_cxx ? '' : ' -lstdc++ ' ) . ' -linfix' ),
             objects            => [@objs],
@@ -296,7 +296,7 @@ use %s;
             module_name        => join '::',
             @parts
         };
-        ddx $data;
+        #~ ddx $data;
         return (
             #~ ( $force || ( !-f $lib_file ) || grep { path($_)->stat->mtime > path($lib_file)->stat->mtime } @objs ) ?
             $builder->link(%$data)
