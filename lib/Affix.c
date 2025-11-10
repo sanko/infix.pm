@@ -300,28 +300,30 @@ void plan_step_push_array(
     const infix_type * type = step->data.type;
     SV * sv = perl_stack_frame[step->data.index];
     const infix_type * element_type = type->meta.array_info.element_type;
+    size_t c_array_len = type->meta.array_info.num_elements;
 
-    // Correctly handle char[N] argument decay to char* for string inputs
+    // ABI RULE: In C, a function parameter declared as an array (e.g., char s[20])
+    // is "adjusted" to a pointer parameter (char *s). We must emulate this.
     if (element_type->category == INFIX_TYPE_PRIMITIVE &&
         (element_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8 ||
          element_type->meta.primitive_id == INFIX_PRIMITIVE_UINT8) &&
         SvPOK(sv)) {
-        // Allocate space for a POINTER, not the array value
-        void * c_arg_ptr = infix_arena_alloc(affix->args_arena, sizeof(char *), _Alignof(char *));
-        c_args[step->data.index] = c_arg_ptr;
+        char * arena_str = infix_arena_alloc(affix->args_arena, c_array_len, 1);
+        STRLEN perl_len;
+        const char * perl_str = SvPV(sv, perl_len);
 
-        // Copy the perl string into the arena to make it stable
-        STRLEN len;
-        const char * sv_str = SvPV(sv, len);
-        char * arena_str = infix_arena_alloc(affix->args_arena, len + 1, 1);
-        memcpy(arena_str, sv_str, len + 1);
-
-        // The value of our argument is the pointer to the stable string
-        *(char **)c_arg_ptr = arena_str;
+        if (perl_len >= c_array_len) {
+            memcpy(arena_str, perl_str, c_array_len - 1);
+            arena_str[c_array_len - 1] = '\0';
+        }
+        else {
+            memcpy(arena_str, perl_str, perl_len + 1);
+        }
+        c_args[step->data.index] = arena_str;
         return;
     }
 
-    // Default behavior for other arrays (e.g., array of ints, structs)
+    // For all other cases (e.g., struct returned by value), marshal as a value.
     void * c_arg_ptr = infix_arena_alloc(affix->args_arena, infix_type_get_size(type), infix_type_get_alignment(type));
     c_args[step->data.index] = c_arg_ptr;
 
