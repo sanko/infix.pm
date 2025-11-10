@@ -25,7 +25,7 @@ sub on_closing {
     return 1;
 }
 
-# --- Main Program ---
+# Main Program
 # 1. Initialize the library
 die "Failed to init LibUI" if LibUI::uiInit( { Size => 0 } );
 
@@ -51,7 +51,7 @@ LibUI::uiBoxSetPadded( $vbox_right, 1 );
 LibUI::uiBoxAppend( $hbox, $vbox_right, 1 );    # 1 = stretchy
 
 # 4. Create and arrange widgets
-# --- Left Pane ---
+# Left Pane
 $spinbox      = LibUI::uiNewSpinbox( 0, 100 );
 $slider       = LibUI::uiNewSlider( 0, 100 );
 $progress_bar = LibUI::uiNewProgressBar();
@@ -59,7 +59,7 @@ LibUI::uiBoxAppend( $vbox_left, $spinbox,      0 );
 LibUI::uiBoxAppend( $vbox_left, $slider,       0 );
 LibUI::uiBoxAppend( $vbox_left, $progress_bar, 0 );
 
-# --- Right Pane ---
+# Right Pane
 my $group = LibUI::uiNewGroup("Options");
 LibUI::uiGroupSetMargined( $group, 1 );
 LibUI::uiBoxAppend( $vbox_right, $group, 1 );    # stretchy group

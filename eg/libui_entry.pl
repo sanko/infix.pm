@@ -36,7 +36,7 @@ sub on_submit_clicked {
 }
 sub on_closing { LibUI::uiQuit(); 1 }
 
-# --- Main Program ---
+# Main Program
 die "Failed to init LibUI" if LibUI::uiInit( { Size => 0 } );
 $main_win = LibUI::uiNewWindow( "User Registration", 300, 150, 0 );
 LibUI::uiWindowSetMargined( $main_win, 1 );

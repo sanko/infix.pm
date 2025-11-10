@@ -41,7 +41,7 @@ sub handler_draw ( $handler, $area, $params ) {
     }
 }
 
-# --- Main Program ---
+# Main Program
 die "Failed to init LibUI" if uiInit( \{ Size => 0 } );
 
 # Define the color for the bar that the slider will control

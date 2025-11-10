@@ -85,7 +85,11 @@ package LibUI v1.0.0 {
             uiWindowResizeEdgeTopLeft     => 4,
             uiWindowResizeEdgeTopRight    => 5,
             uiWindowResizeEdgeBottomLeft  => 6,
-            uiWindowResizeEdgeBottomRight => 7
+            uiWindowResizeEdgeBottomRight => 7,
+            uiTableValueTypeString        => 0,
+            uiTableValueTypeImage         => 1,
+            uiTableValueTypeInt           => 2,
+            uiTableValueTypeColor         => 3
         ) {
             *{$key} = sub () {$value};
             push @EXPORT_OK, "\$$key";
@@ -126,6 +130,9 @@ package LibUI v1.0.0 {
     @uiArea = @uiControl;
     @uiFontButton = @uiControl;
     @uiColorButton = @uiControl;
+    @uiTable = @uiControl;
+    @uiTableModel = *void;
+    @uiTableValue = *void;
 
     # Part 2: Forward Declarations for Defined Structs
     @uiAreaHandler;
@@ -136,6 +143,8 @@ package LibUI v1.0.0 {
     @uiAreaMouseEvent;
     @uiAreaDrawParams;
     @uiDrawBrushGradientStop;
+    @uiTableModelHandler;
+    @uiTableParams;
 
     # Part 3: Full Struct Definitions
     @uiInitOptions = { Size: size_t };
@@ -204,6 +213,17 @@ package LibUI v1.0.0 {
         DragBroken:     *((*@uiAreaHandler, @uiArea)->void),
         KeyEvent:       *((*@uiAreaHandler, @uiArea, *@uiAreaKeyEvent)->int)
     };
+
+
+    # Table structs needed for the table example
+    @uiTableModelHandler = {
+        NumColumns:   *((*@uiTableModelHandler, @uiTableModel)->int),
+        ColumnType:   *((*@uiTableModelHandler, @uiTableModel, int)->int),
+        NumRows:      *((*@uiTableModelHandler, @uiTableModel)->int),
+        CellValue:    *((*@uiTableModelHandler, @uiTableModel, int, int)->@uiTableValue),
+        SetCellValue: *((*@uiTableModelHandler, @uiTableModel, int, int, *@uiTableValue)->void)
+    };
+    @uiTableParams = { Model: @uiTableModel, RowBackgroundColorModelColumn: int };
 END_TYPEDEFS
     for my ( $name, $sig )(
 
@@ -455,7 +475,27 @@ END_TYPEDEFS
         uiOpenFile    => '(@uiWindow)->*char',
         uiSaveFile    => '(@uiWindow)->*char',
         uiMsgBox      => '(@uiWindow, *char, *char)->void',
-        uiMsgBoxError => '(@uiWindow, *char, *char)->void'
+        uiMsgBoxError => '(@uiWindow, *char, *char)->void',
+
+        # Table Value
+        uiNewTableValueString => '(*char)->@uiTableValue',
+        uiTableValueString    => '(@uiTableValue)->*char',
+        uiFreeTableValue      => '(@uiTableValue)->void',
+
+        # Table Model
+        uiNewTableModel               => '(*@uiTableModelHandler)->@uiTableModel',
+        uiFreeTableModel              => '(@uiTableModel)->void',
+        uiTableModelNotifyRowInserted => '(@uiTableModel, int)->void',
+        uiTableModelNotifyRowChanged  => '(@uiTableModel, int)->void',
+        uiTableModelNotifyRowDeleted  => '(@uiTableModel, int)->void',
+        uiTableModelRowInserted       => '(@uiTableModel, int)->void',
+
+        # Table View
+        uiNewTable                   => '(*@uiTableParams)->@uiTable',
+        uiTableAppendTextColumn      => '(@uiTable, *char, int, int)->void',
+        uiTableAppendImageColumn     => '(@uiTable, *char, int)->void',
+        uiTableAppendImageTextColumn => '(@uiTable, *char, int, int, int)->void',
+        uiTableAppendCheckboxColumn  => '(@uiTable, *char, int, int)->void'
     ) {
         my $as = 'LibUI::' . $name;
         affix $lib, [ $name => $as ], $sig;
