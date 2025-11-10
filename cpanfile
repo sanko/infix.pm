@@ -23,3 +23,16 @@ on build => sub {
     requires 'Getopt::Long', '2.36';
     requires 'Path::Tiny';
 };
+on test => sub {
+    requires 'Capture::Tiny';
+    requires 'Data::Dump';
+    requires 'Data::Printer';
+    requires 'IPC::Cmd';
+    requires 'TAP::Harness::Env';
+    requires 'Test2::Plugin::UTF8';
+    requires 'Test2::Tools::Compare';
+    requires 'Test2::V0';
+    recommends 'Benchmark';
+    recommends 'FFI::Platypus', '2';
+    recommends 'Inline::C';
+};

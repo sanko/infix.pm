@@ -9,29 +9,31 @@ use Config;
 use Benchmark qw[:all];
 $|++;
 
-# --- Conditionally load FFI::Platypus ---
+# Conditionally load FFI::Platypus
 my $has_platypus;
 
 BEGIN {
-    eval "use FFI::Platypus";
+    eval 'use FFI::Platypus';
     unless ($@) {
         $has_platypus = 1;
-        diag "FFI::Platypus found, including it in benchmarks.";
+        diag 'FFI::Platypus found, including it in benchmarks.';
     }
     else {
-        diag "FFI::Platypus not found, skipping its benchmarks.";
+        diag 'FFI::Platypus not found, skipping its benchmarks.';
     }
 }
+my $libm = '' . libm();
+diag 'libm: ' . $libm;
 
 # FFI Setup
 # Affix / Wrap setup
-my $wrap_sin = wrap( libm(), 'sin', '(double)->double' );
-affix( libm(), [ sin => 'affix_sin' ], '(double)->double' );
+my $wrap_sin = wrap( $libm, 'sin', '(double)->double' );
+affix( $libm, [ sin => 'affix_sin' ], '(double)->double' );
 
 # FFI::Platypus setup (only if available)
 my $platypus_sin;
 if ($has_platypus) {
-    my $ffi = FFI::Platypus->new( api => 2, lib => libm() );
+    my $ffi = FFI::Platypus->new( api => 2, lib => $libm );
 
     # Use find_lib with a named argument
     $ffi->attach( [ sin => 'platypus_sin' ], ['double'] => 'double' );
@@ -69,20 +71,23 @@ subtest benchmarks => sub {
         affix => sub {
             my $x = 0;
             while ( $x < $depth ) { my $n = affix_sin($x); $x++ }
-        }
-    );
+        }, (
+            $has_platypus ?
 
-    # Conditionally add Platypus benchmark
-    if ($has_platypus) {
-        $benchmarks{pp_f} = sub {
-            my $x = 0;
-            while ( $x < $depth ) { my $n = $platypus_sin->($x); $x++ }
-        };
-        $benchmarks{pp_a} = sub {
-            my $x = 0;
-            while ( $x < $depth ) { my $n = platypus_sin($x); $x++ }
-        };
-    }
+                # Conditionally add Platypus benchmark
+                (
+                plat_f => sub {
+                    my $x = 0;
+                    while ( $x < $depth ) { my $n = $platypus_sin->($x); $x++ }
+                },
+                plat_a => sub {
+                    my $x = 0;
+                    while ( $x < $depth ) { my $n = platypus_sin($x); $x++ }
+                }
+                ) :
+                ()
+        )
+    );
     isnt fastest( -5, %benchmarks ), 'pure', 'The fastest method should not be pure Perl';
 };
 
@@ -107,26 +112,3 @@ sub fastest {
     [ sort { $b->{n} * $a->{s} <=> $a->{n} * $b->{s} } @marks ]->[0]->{name};
 }
 done_testing;
-__END__
-
-
-# Subtest: benchmarks
-    # running pure, affix, wrap, platypus for 5 seconds each
-             Rate platypus     wrap    affix     pure
-platypus  44676/s       --     -87%     -88%     -91%
-wrap     333545/s     647%       --      -7%     -35%
-affix    357716/s     701%       7%       --     -31%
-pure     515990/s    1055%      55%      44%       --
-not ok 2 - Subtest: benchmarks
-# Failed test 'Subtest: benchmarks'
-
-
-# Subtest: benchmarks
-    # running pure, affix, wrap for 5 seconds each
-    # affix -  7 wallclock secs ( 6.28 usr +  0.01 sys =  6.30 CPU) @ 495692.82/s (n=3120882)
-    #  pure -  6 wallclock secs ( 5.14 usr +  0.02 sys =  5.16 CPU) @ 432108.59/s (n=2228384)
-    #  wrap -  5 wallclock secs ( 5.08 usr +  0.00 sys =  5.08 CPU) @ 488013.59/s (n=2478133)
-    #            Rate  pure  wrap affix
-    # pure   432109/s    --  -11%  -13%
-    # wrap   488014/s   13%    --   -2%
-    # affix  495693/s   15%    2%    --
