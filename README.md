@@ -10,10 +10,10 @@ use Affix qw[:all];
 # bind to exported function
 affix libm, 'floor', [Double], Double;
 warn floor(3.14159);    # 3
-warn floor(3.99999);    # 3 
+warn floor(3.99999);    # 3
 
 # wrap an exported function in a code reference
-my $getpid = wrap libc, 'getpid', [], Int;   # '_getpid' on Win32  
+my $getpid = wrap libc, 'getpid', [], Int;   # '_getpid' on Win32
 warn $getpid->();                            # $$
 warn getpid();                               # $$
 
@@ -66,7 +66,7 @@ affix libc, 'puts', [Str], Int;
 puts( 'Hello' );
 
 affix './mylib.dll', ['output', 'write'], [Str], Int; # renamed function
-write( 'Hello' );    
+write( 'Hello' );
 
 affix undef, [ 'rint', 'round' ], [Double], Double; # use current process
 warn round(3.14);
@@ -88,7 +88,7 @@ Expected parameters include:
 
     If you pass a string, Affix will try to load the library with the given name. For example, `affix 'foo', ...`
     will try to load `libfoo.so` on Unix, `libfoo.dylib` on macOS, and `foo.dll` on Windows. This is useful for
-    libraries that do not provide versioned symbols or when you want to load the latest version of the library.     
+    libraries that do not provide versioned symbols or when you want to load the latest version of the library.
 
 - `symbol_name` - required
 
@@ -143,7 +143,7 @@ Parameters include:
     File path or name of the library to load symbols from. Pass an explicit `undef` to pull functions from the main
     executable.
 
-    If you pass a list reference, Affix will try to load the library with the given name and version. See 
+    If you pass a list reference, Affix will try to load the library with the given name and version. See
     [affix( ... )](#affix) for more details.
 
 - `symbol_name` - required
@@ -159,7 +159,7 @@ Parameters include:
     A single return type for the function.
 
 `wrap( ... )` behaves exactly like `affix( ... )` but returns an anonymous subroutine and does not pollute the
-namespace with a named function.    
+namespace with a named function.
 
 ## `pin( ... )`
 
@@ -213,10 +213,10 @@ my $raw_data = $ptr->marshal( $struct_data );
 
 Marshals a structure or array into raw data. This is useful when you want to convert a structured format into raw
 binary data that can be passed to a function or stored in a file. The `$struct_data` should be a Perl data structure
-that represents the data in the structure or array format, and the `$struct` should be a structure type defined        
+that represents the data in the structure or array format, and the `$struct` should be a structure type defined
 using the [Types](#types) system. The `marshal( ... )` method will return a string containing the raw binary data
 that represents the data in the structure or array format. This is particularly useful for passing data to C functions
-or storing data in a binary format.     
+or storing data in a binary format.
 
 ## `unmarshal( ... )`
 
@@ -229,7 +229,7 @@ my $data = $ptr->unmarshal( $raw_data );
 Unmarshals raw data into a structure or array. This is useful when you have raw binary data that you want to convert
 into a structured format. The `$raw_data` should be a string containing the raw binary data, and the `$struct`
 should be a structure type defined using the [Types](#types) system. The `unmarshal( ... )` method will return a
-Perl data structure that represents the data in the structure or array format.     
+Perl data structure that represents the data in the structure or array format.
 
 ## `typedef( ... )`
 
@@ -239,11 +239,11 @@ my $person = MyType->new( name => 'John Doe', age => 30 );
 ```
 
 Creates a new type alias for a structure, union, or array. This is useful for creating more readable and maintainable
-code by giving a meaningful name to a complex type. 
+code by giving a meaningful name to a complex type.
 
 ```
 The C<$type_name> should be a string representing the name of the
-   type, and the C<$type_definition> should be a structure, union, or array type defined using the L<Types|/Types>    
+   type, and the C<$type_definition> should be a structure, union, or array type defined using the L<Types|/Types>
    system. The C<typedef( ... )> function will create a new type that can be used in the same way as any other type
    defined in Affix. This is particularly useful for creating custom types that represent specific data structures or
    formats, making your code more readable and easier to understand.
@@ -270,8 +270,6 @@ the same shared library exists, the most recent should be returned.
 ## `load_library( ... )`
 
 ## `free_library( ... )`
-
-## `list_symbols( ... )`
 
 ## `find_symbol( ... )`
 
@@ -316,7 +314,7 @@ my $ptr = malloc( $size );
 
 Allocates `$size` bytes of uninitialized storage.
 
-The pointer returned is of type `Pointer` and can be used to access the allocated memory. The memory is not        
+The pointer returned is of type `Pointer` and can be used to access the allocated memory. The memory is not
 initialized, so it may contain garbage values. It is the caller's responsibility to ensure that the memory is
 initialized before use. If the allocation fails, `malloc( ... )` will return an undefined value.
 
@@ -330,7 +328,7 @@ Allocates memory for an array of `$num` objects of `$size` and initializes all b
 zero.
 
 The pointer returned is of type `Pointer` and can be used to access the allocated memory. The memory is initialized
-to zero, so all bytes in the allocated storage will be set to zero. If the allocation fails, `calloc( ... )` will  
+to zero, so all bytes in the allocated storage will be set to zero. If the allocation fails, `calloc( ... )` will
 return an undefined value.
 
 ## `realloc( ... )`
@@ -436,7 +434,7 @@ This is a debugging function that probably shouldn't find its way into your code
 ## `sv_dump( ... )`
 
 ```
-sv_dump( $sv ); 
+sv_dump( $sv );
 ```
 
 Dumps the contents of a Perl scalar variable in a human-readable format.
@@ -489,7 +487,7 @@ They may be imported by name or with the `:types` tag.
 
 - `Char`
 
-    Represents a single character. Used for functions that take or return characters. 
+    Represents a single character. Used for functions that take or return characters.
 
 - `UChar`
 
@@ -528,7 +526,7 @@ They may be imported by name or with the `:types` tag.
 
     Represents an unsigned long integer. Used for functions that take or return unsigned long integers.
 
-- `LongLong`       
+- `LongLong`
 
     Represents a long long integer. Used for functions that take or return long long integers.
 
@@ -550,7 +548,7 @@ They may be imported by name or with the `:types` tag.
 
 - `Double`
 
-    Represents a double-precision floating-point number. Used for functions that take or return double-precision numbers.   
+    Represents a double-precision floating-point number. Used for functions that take or return double-precision numbers.
 
 - `String`
 
@@ -569,11 +567,11 @@ They may be imported by name or with the `:types` tag.
 - `Callback[Signature]`
 
     Represents a callback function. Used for functions that take or return callbacks. The signature defines the parameters
-    and return type of the callback function.       
+    and return type of the callback function.
 
 - `Struct[Fields]`
 
-    Represents a structure with named fields. Used for functions that take or return structures. The fields are defined     
+    Represents a structure with named fields. Used for functions that take or return structures. The fields are defined
     as a list of name-type pairs, where each name is a string and each type is an Affix type.
 
 - `Array[Type, Size]`
@@ -589,7 +587,7 @@ They may be imported by name or with the `:types` tag.
 - `Enum[Values]`
 
     Represents an enumeration with named values. Used for functions that take or return enumerations. The values are
-    defined as a list of name-value pairs, where each name is a string and each value is an integer. The values are     
+    defined as a list of name-value pairs, where each name is a string and each value is an integer. The values are
     typically used to represent a set of named constants.
 
 - `Enum[Values, Type]`
@@ -597,54 +595,7 @@ They may be imported by name or with the `:types` tag.
     Represents an enumeration with named values and a specific type. Used for functions that take or return enumerations.
     The values are defined as a list of name-value pairs, where each name is a string and each value is an integer. The
     type is an Affix type that specifies the underlying type of the enumeration. This allows for more control over the
-    size and representation of the enumeration values. 
-
-# Calling Conventions
-
-Handle with care! Using these without understanding them can break your code!
-
-Refer to [the dyncall manual](https://dyncall.org/docs/manual/manualse11.html),
-[http://www.angelcode.com/dev/callconv/callconv.html](http://www.angelcode.com/dev/callconv/callconv.html), [https://en.wikipedia.org/wiki/Calling\_convention](https://en.wikipedia.org/wiki/Calling_convention), and your
-local university's Comp Sci department for a deeper explanation.
-
-After having done that, feel free to use or misuse any of the current options:
-
-- `This`
-
-    Platform native C++ this calls
-
-- `Ellipsis`
-- `Varargs`
-- `CDecl`
-
-    x86 specific
-
-- `STDCall`
-
-    x86 specific
-
-- `MSFastcall`
-
-    x86 specific
-
-- `GNUFastcall`
-
-    x86 specific
-
-- `MSThis`
-
-    x86 specific, MS C++ this calls
-
-- `GNUThis`
-
-    x86 specific, GNU C++ `this` calls are `cdecl`, but this is defined for clarity
-
-- `Arm`
-- `Thumb`
-- `Syscall`
-
-When used in ["Signatures" in signatures](https://metacpan.org/pod/signatures#Signatures), most of these cause the internal argument stack to be reset. The exceptions are
-`Ellipsis` and `Varargs`.
+    size and representation of the enumeration values.
 
 # Calling into the Standard Library
 

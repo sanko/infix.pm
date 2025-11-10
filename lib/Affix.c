@@ -299,6 +299,29 @@ void plan_step_push_array(
     PERL_UNUSED_VAR(ret_buffer);
     const infix_type * type = step->data.type;
     SV * sv = perl_stack_frame[step->data.index];
+    const infix_type * element_type = type->meta.array_info.element_type;
+
+    // Correctly handle char[N] argument decay to char* for string inputs
+    if (element_type->category == INFIX_TYPE_PRIMITIVE &&
+        (element_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8 ||
+         element_type->meta.primitive_id == INFIX_PRIMITIVE_UINT8) &&
+        SvPOK(sv)) {
+        // Allocate space for a POINTER, not the array value
+        void * c_arg_ptr = infix_arena_alloc(affix->args_arena, sizeof(char *), _Alignof(char *));
+        c_args[step->data.index] = c_arg_ptr;
+
+        // Copy the perl string into the arena to make it stable
+        STRLEN len;
+        const char * sv_str = SvPV(sv, len);
+        char * arena_str = infix_arena_alloc(affix->args_arena, len + 1, 1);
+        memcpy(arena_str, sv_str, len + 1);
+
+        // The value of our argument is the pointer to the stable string
+        *(char **)c_arg_ptr = arena_str;
+        return;
+    }
+
+    // Default behavior for other arrays (e.g., array of ints, structs)
     void * c_arg_ptr = infix_arena_alloc(affix->args_arena, infix_type_get_size(type), infix_type_get_alignment(type));
     c_args[step->data.index] = c_arg_ptr;
 
@@ -997,6 +1020,8 @@ SV * pull_pointer(pTHX_ Affix * affix, const infix_type * type, void * ptr) {
             pointee_type->meta.primitive_id == INFIX_PRIMITIVE_UINT8) {
             return newSVpv((const char *)c_ptr, 0);
         }
+    default:
+        break;
     }
 
     Affix_Pin * pin;
@@ -1150,6 +1175,8 @@ void sv2ptr(pTHX_ Affix * affix, SV * perl_sv, void * c_ptr, const infix_type * 
             else if (SvPOK(perl_sv))
                 *(const char **)c_ptr = SvPV_nolen(perl_sv);
             else if (SvROK(perl_sv) && SvTYPE(SvRV(perl_sv)) == SVt_PVAV) {
+                // Special case for realloc test: marshalling array ref into T*.
+                // This requires allocating new memory. We can't use the arena here.
                 AV * av = (AV *)SvRV(perl_sv);
                 size_t len = av_len(av) + 1;
                 size_t element_size = infix_type_get_size(pointee_type);
