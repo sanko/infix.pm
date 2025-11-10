@@ -296,6 +296,7 @@ use %s;
             module_name        => join '::',
             @parts
         };
+
         #~ ddx $data;
         return (
             #~ ( $force || ( !-f $lib_file ) || grep { path($_)->stat->mtime > path($lib_file)->stat->mtime } @objs ) ?

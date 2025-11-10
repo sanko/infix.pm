@@ -270,6 +270,7 @@ DLLEXPORT int sum_point_by_val(Point p) {
 }
 
 DLLEXPORT char get_char_at(char s[20], int index) {
+    warn("# get_char_at('%s', %d);", s, index);
     if (index >= 20 || index < 0) return '!';
     return s[index];
 }

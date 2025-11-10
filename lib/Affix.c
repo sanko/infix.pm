@@ -132,7 +132,6 @@ void plan_step_push_primitive(
     case INFIX_PRIMITIVE_SINT128:
     case INFIX_PRIMITIVE_UINT128:
         croak("128-bit integer marshalling not yet implemented");
-        break;
 #endif
     }
 }
@@ -192,9 +191,7 @@ void plan_step_push_pointer(
             }
         }
 
-        if (SvTYPE(rv) == SVt_PVAV) {  // Array reference -> C array pointer
-            // This is for passing a reference to an array, to be marshalled as a T* pointer
-            // (not as a fixed-size C array T[N]).
+        if (SvTYPE(rv) == SVt_PVAV) {
             AV * av = (AV *)rv;
             size_t len = av_len(av) + 1;
             size_t element_size = infix_type_get_size(pointee_type);
@@ -299,35 +296,15 @@ void plan_step_push_array(
     PERL_UNUSED_VAR(ret_buffer);
     const infix_type * type = step->data.type;
     SV * sv = perl_stack_frame[step->data.index];
-    const infix_type * element_type = type->meta.array_info.element_type;
-    size_t c_array_len = type->meta.array_info.num_elements;
 
     // ABI RULE: In C, a function parameter declared as an array (e.g., char s[20])
     // is "adjusted" to a pointer parameter (char *s). We must emulate this.
-    if (element_type->category == INFIX_TYPE_PRIMITIVE &&
-        (element_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8 ||
-         element_type->meta.primitive_id == INFIX_PRIMITIVE_UINT8) &&
-        SvPOK(sv)) {
-        char * arena_str = infix_arena_alloc(affix->args_arena, c_array_len, 1);
-        STRLEN perl_len;
-        const char * perl_str = SvPV(sv, perl_len);
+    // The FFI call needs a pointer, not the value of the array itself.
+    void * temp_buffer = infix_arena_alloc(affix->args_arena, type->size, type->alignment);
+    push_array(aTHX_ affix, type, sv, temp_buffer);
 
-        if (perl_len >= c_array_len) {
-            memcpy(arena_str, perl_str, c_array_len - 1);
-            arena_str[c_array_len - 1] = '\0';
-        }
-        else {
-            memcpy(arena_str, perl_str, perl_len + 1);
-        }
-        c_args[step->data.index] = arena_str;
-        return;
-    }
-
-    // For all other cases (e.g., struct returned by value), marshal as a value.
-    void * c_arg_ptr = infix_arena_alloc(affix->args_arena, infix_type_get_size(type), infix_type_get_alignment(type));
-    c_args[step->data.index] = c_arg_ptr;
-
-    push_array(aTHX_ affix, type, sv, c_arg_ptr);
+    // The actual argument passed to the function is the pointer to our temp buffer.
+    c_args[step->data.index] = temp_buffer;
 }
 
 /**
@@ -566,8 +543,6 @@ void Affix_trigger(pTHX_ CV * cv) {
         }
     }
 
-
-    // --- Set Return Value for Perl ---
     // The final plan step has placed the return SV into affix->return_sv.
     // This is the only place we should modify the Perl stack.
     ST(0) = sv_2mortal(affix->return_sv);
@@ -687,7 +662,7 @@ XS_INTERNAL(Affix_affix) {
     if (!affix->args_arena || !affix->ret_arena)
         croak("Failed to create memory arenas for FFI call");
 
-    // --- COMPILE THE EXECUTION PLAN ---
+    // Compile the execution plan
     size_t num_args = infix_forward_get_num_args(affix->infix);
     affix->plan_length = num_args + 2;  // args + call + return
     Newxz(affix->plan, affix->plan_length, Affix_Plan_Step);
@@ -754,8 +729,6 @@ XS_INTERNAL(Affix_affix) {
         safefree(affix);
         croak("Unsupported return type in signature");
     }
-
-    // --- END OF COMPILATION ---
 
     char prototype_buf[256] = {0};
     for (size_t i = 0; i < num_args; ++i)
@@ -1339,11 +1312,11 @@ void push_reverse_trampoline(pTHX_ Affix * affix, const infix_type * type, SV * 
             *(void **)p = infix_reverse_get_code(reverse_ctx);
         }
     }
-    else if (!SvOK(sv))   // Check for undef
+    else if (!SvOK(sv))  // Check for undef
         *(void **)p = NULL;
     else
         croak("Argument for a callback must be a code reference or undef.");
-    }
+}
 
 
 static SV * _format_parse_error(pTHX_ const char * context_msg, const char * signature, infix_error_details_t err) {
