@@ -205,7 +205,13 @@ void plan_step_push_pointer(
         *(const char **)c_arg_ptr = SvPV_nolen(sv);
         return;
     }
-    croak("Don't know how to handle this type of scalar as a pointer argument");
+
+    PING;
+    sv_dump(sv);
+
+    char signature_buf[256];
+    (void)infix_type_print(signature_buf, sizeof(signature_buf), (infix_type *)type, INFIX_DIALECT_SIGNATURE);
+    croak("Don't know how to handle this type of scalar as a pointer argument yet: %s", signature_buf);
 }
 /**
  * @brief Executor for marshalling a Perl HASH ref into a C struct.
