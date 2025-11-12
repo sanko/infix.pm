@@ -64,6 +64,7 @@ subtest types => sub {
     #~ use Data::Dump;
     #~ ddx [ Int, Void, Pointer [Int], Int ];
 };
+diag '-' x 50;
 
 # This C code will be compiled into a temporary library for many of the tests.
 my $C_CODE = <<'END_C';
@@ -77,7 +78,7 @@ my $C_CODE = <<'END_C';
 
 /* Expose global vars */
 DLLEXPORT int global_counter = 42;
-DLLEXPORT void set_global_counter(int value) { global_counter = value;}
+DLLEXPORT void set_global_counter(int value) { warn("---> value: %d", value);global_counter = value;}
 DLLEXPORT int get_global_counter(void) { return global_counter;}
 
 /* Basic Primitives */
@@ -382,7 +383,7 @@ subtest 'Forward Calls: Comprehensive Pointer Types' => sub {
     };
     subtest 'Function Pointers (*(int->int))' => sub {
         isa_ok my $harness = wrap( $lib_path, 'call_int_cb', '(*((int32)->int32), int32)->int32' ), ['Affix'];
-        my $result = $harness->( sub { $_[0] * 10 }, 7 );
+        my $result = $harness->( sub { warn 'HERE!!!!!!!!!!!!!!!!!!!!!!!!!!'; $_[0] * 10 }, 7 );
         is $result, 70, 'Correctly passed a simple coderef as a function pointer';
         ok $check_is_null->(undef), 'Passing undef as a function pointer is received as NULL';
     };
