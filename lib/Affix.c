@@ -1,133 +1,224 @@
 #include "Affix.h"
 #include <string.h>
-// Forward declarations for all "pull" marshalling handlers (C -> Perl)
-// These are still needed for the return value step and for ptr2sv.
-SV * pull_sint8(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_uint8(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_sint16(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_uint16(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_sint32(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_uint32(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_sint64(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_uint64(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_float(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_double(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_long_double(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_bool(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_void(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_struct(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_union(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_array(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_enum(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_complex(pTHX_ Affix *, const infix_type *, void * p);
-SV * pull_vector(pTHX_ Affix *, const infix_type *, void * p);
-SV * pull_pointer(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_sv(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_reverse_trampoline(pTHX_ Affix *, const infix_type *, void *);
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//               FORWARD DECLARATIONS FOR STATIC FUNCTIONS
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+// --- Pin Management ---
+static int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg);
+static int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg);
+static U32 Affix_len_pin(pTHX_ SV * sv, MAGIC * mg);
+static int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg);
+
+// --- Execution Plan Step Executors ---
+static void plan_step_push_bool(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_sint8(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_uint8(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_sint16(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_uint16(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_sint32(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_uint32(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_sint64(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_uint64(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_float(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_double(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_long_double(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
 #if !defined(INFIX_COMPILER_MSVC)
-SV * pull_sint128(pTHX_ Affix *, const infix_type *, void *);
-SV * pull_uint128(pTHX_ Affix *, const infix_type *, void *);
+static void plan_step_push_sint128(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_uint128(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
 #endif
-// Forward declarations for push helpers that are re-used by sv2ptr
-void push_array(pTHX_ Affix * affix, const infix_type * type, SV * sv, void * p);
-void push_reverse_trampoline(pTHX_ Affix * affix, const infix_type * type, SV * sv, void * p);
-void _populate_hv_from_c_struct(pTHX_ Affix * affix, HV * hv, const infix_type * type, void * p);
-// Forward declarations for the new plan step executors.
-void plan_step_push_primitive(pTHX_ Affix *, Affix_Plan_Step *, SV **, void **, void *);
-void plan_step_push_pointer(pTHX_ Affix *, Affix_Plan_Step *, SV **, void **, void *);
-void plan_step_push_struct(pTHX_ Affix *, Affix_Plan_Step *, SV **, void **, void *);
-void plan_step_push_union(pTHX_ Affix *, Affix_Plan_Step *, SV **, void **, void *);
-void plan_step_push_array(pTHX_ Affix *, Affix_Plan_Step *, SV **, void **, void *);
-void plan_step_push_enum(pTHX_ Affix *, Affix_Plan_Step *, SV **, void **, void *);
-void plan_step_push_complex(pTHX_ Affix *, Affix_Plan_Step *, SV **, void **, void *);
-void plan_step_push_vector(pTHX_ Affix *, Affix_Plan_Step *, SV **, void **, void *);
-void plan_step_push_sv(pTHX_ Affix *, Affix_Plan_Step *, SV **, void **, void *);
-void plan_step_push_callback(pTHX_ Affix *, Affix_Plan_Step *, SV **, void **, void *);
-void plan_step_call_c_function(pTHX_ Affix *, Affix_Plan_Step *, SV **, void **, void *);
-void plan_step_pull_return_value(pTHX_ Affix *, Affix_Plan_Step *, SV **, void **, void *);
-// Forward declaration for the function that resolves a step executor from a type.
-Affix_Step_Executor get_plan_step_executor(const infix_type * type);
-Affix_Pull get_pull_handler(const infix_type * type);
-// Forward declaration for the missing helper.
-infix_type * _copy_type_graph_to_arena(infix_arena_t * arena, const infix_type * type);
-// === MGVTBL Forward Declarations ===
-// These must be declared before the MGVTBL struct is defined.
-int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg);
-int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg);
-U32 Affix_len_pin(pTHX_ SV * sv, MAGIC * mg);
-int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg);
-// === MGVTBL Definition ===
-// This struct MUST be defined before any function that uses it.
-static MGVTBL Affix_pin_vtbl = {Affix_get_pin, Affix_set_pin, Affix_len_pin, NULL, Affix_free_pin, NULL, NULL, NULL};
-/**
- * @brief Executor for marshalling all C primitive types from Perl SVs.
- * This function is designed to be extremely fast. It uses a switch statement
- * that the C compiler can often optimize into a jump table.
- */
-void plan_step_push_primitive(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer) {
-    PERL_UNUSED_VAR(affix);
-    PERL_UNUSED_VAR(ret_buffer);
-    const infix_type * type = step->data.type;
-    SV * sv = perl_stack_frame[step->data.index];
-    void * c_arg_ptr = infix_arena_alloc(affix->args_arena, infix_type_get_size(type), infix_type_get_alignment(type));
-    c_args[step->data.index] = c_arg_ptr;
-    switch (type->meta.primitive_id) {
-    case INFIX_PRIMITIVE_BOOL:
-        *(bool *)c_arg_ptr = SvTRUE(sv);
-        break;
-    case INFIX_PRIMITIVE_SINT8:
-        *(int8_t *)c_arg_ptr = (int8_t)SvIV(sv);
-        break;
-    case INFIX_PRIMITIVE_UINT8:
-        *(uint8_t *)c_arg_ptr = (uint8_t)SvUV(sv);
-        break;
-    case INFIX_PRIMITIVE_SINT16:
-        *(int16_t *)c_arg_ptr = (int16_t)SvIV(sv);
-        break;
-    case INFIX_PRIMITIVE_UINT16:
-        *(uint16_t *)c_arg_ptr = (uint16_t)SvUV(sv);
-        break;
-    case INFIX_PRIMITIVE_SINT32:
-        *(int32_t *)c_arg_ptr = (int32_t)SvIV(sv);
-        break;
-    case INFIX_PRIMITIVE_UINT32:
-        *(uint32_t *)c_arg_ptr = (uint32_t)SvUV(sv);
-        break;
-    case INFIX_PRIMITIVE_SINT64:
-        *(int64_t *)c_arg_ptr = (int64_t)SvIV(sv);
-        break;
-    case INFIX_PRIMITIVE_UINT64:
-        *(uint64_t *)c_arg_ptr = (uint64_t)SvUV(sv);
-        break;
-    case INFIX_PRIMITIVE_FLOAT:
-        *(float *)c_arg_ptr = (float)SvNV(sv);
-        break;
-    case INFIX_PRIMITIVE_DOUBLE:
-        *(double *)c_arg_ptr = (double)SvNV(sv);
-        break;
-    case INFIX_PRIMITIVE_LONG_DOUBLE:
-        *(long double *)c_arg_ptr = (long double)SvNV(sv);
-        break;
+static void plan_step_push_pointer(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_struct(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_union(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_array(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_enum(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_complex(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_vector(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_sv(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_push_callback(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_call_c_function(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+static void plan_step_pull_return_value(pTHX_ Affix *, Affix_Plan_Step *, SV **, void *, void **, void *);
+
+// --- sv2ptr Primitive Push Handlers ---
+static void push_handler_bool(pTHX_ Affix *, SV *, void *);
+static void push_handler_sint8(pTHX_ Affix *, SV *, void *);
+static void push_handler_uint8(pTHX_ Affix *, SV *, void *);
+static void push_handler_sint16(pTHX_ Affix *, SV *, void *);
+static void push_handler_uint16(pTHX_ Affix *, SV *, void *);
+static void push_handler_sint32(pTHX_ Affix *, SV *, void *);
+static void push_handler_uint32(pTHX_ Affix *, SV *, void *);
+static void push_handler_sint64(pTHX_ Affix *, SV *, void *);
+static void push_handler_uint64(pTHX_ Affix *, SV *, void *);
+static void push_handler_float(pTHX_ Affix *, SV *, void *);
+static void push_handler_double(pTHX_ Affix *, SV *, void *);
+static void push_handler_long_double(pTHX_ Affix *, SV *, void *);
+
+// --- Pull handlers (C -> Perl) ---
+static void pull_sint8(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_uint8(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_sint16(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_uint16(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_sint32(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_uint32(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_sint64(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_uint64(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_float(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_double(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_long_double(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_bool(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_void(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_struct(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_union(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_array(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_enum(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_complex(pTHX_ Affix *, SV *, const infix_type *, void * p);
+static void pull_vector(pTHX_ Affix *, SV *, const infix_type *, void * p);
+static void pull_pointer(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_sv(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_reverse_trampoline(pTHX_ Affix *, SV *, const infix_type *, void *);
 #if !defined(INFIX_COMPILER_MSVC)
-    case INFIX_PRIMITIVE_SINT128:
-    case INFIX_PRIMITIVE_UINT128:
-        croak("128-bit integer marshalling not yet implemented");
+static void pull_sint128(pTHX_ Affix *, SV *, const infix_type *, void *);
+static void pull_uint128(pTHX_ Affix *, SV *, const infix_type *, void *);
 #endif
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//              MACROS AND DEFINITIONS (BEFORE STATIC DATA)
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+#define DEFINE_PUSH_PRIMITIVE_EXECUTOR(name, c_type, sv_accessor)         \
+    static void plan_step_push_##name(pTHX_ Affix * affix,                \
+                                      Affix_Plan_Step * step,             \
+                                      SV ** perl_stack_frame,             \
+                                      void * args_buffer,                 \
+                                      void ** c_args,                     \
+                                      void * ret_buffer) {                \
+        PERL_UNUSED_VAR(affix);                                           \
+        PERL_UNUSED_VAR(ret_buffer);                                      \
+        SV * sv = perl_stack_frame[step->data.index];                     \
+        void * c_arg_ptr = (char *)args_buffer + step->data.c_arg_offset; \
+        *(c_type *)c_arg_ptr = (c_type)sv_accessor(sv);                   \
+        c_args[step->data.index] = c_arg_ptr;                             \
     }
+
+#define DEFINE_PUSH_HANDLER(name, c_type, ok_checker, sv_accessor)                     \
+    static void push_handler_##name(pTHX_ Affix * affix, SV * perl_sv, void * c_ptr) { \
+        PERL_UNUSED_VAR(affix);                                                        \
+        *(c_type *)c_ptr = (c_type)(ok_checker(perl_sv) ? sv_accessor(perl_sv) : 0);   \
+    }
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//              FUNCTION DEFINITIONS (BEFORE STATIC DATA)
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+// --- Define sv2ptr primitive handlers ---
+DEFINE_PUSH_HANDLER(sint8, int8_t, SvIOK, SvIV)
+DEFINE_PUSH_HANDLER(uint8, uint8_t, SvUOK, SvUV)
+DEFINE_PUSH_HANDLER(sint16, int16_t, SvIOK, SvIV)
+DEFINE_PUSH_HANDLER(uint16, uint16_t, SvUOK, SvUV)
+DEFINE_PUSH_HANDLER(sint32, int32_t, SvIOK, SvIV)
+DEFINE_PUSH_HANDLER(uint32, uint32_t, SvUOK, SvUV)
+DEFINE_PUSH_HANDLER(sint64, int64_t, SvIOK, SvIV)
+DEFINE_PUSH_HANDLER(uint64, uint64_t, SvUOK, SvUV)
+DEFINE_PUSH_HANDLER(float, float, SvNOK, SvNV)
+DEFINE_PUSH_HANDLER(double, double, SvNOK, SvNV)
+DEFINE_PUSH_HANDLER(long_double, long double, SvNOK, SvNV)
+
+static void push_handler_bool(pTHX_ Affix * affix, SV * perl_sv, void * c_ptr) {
+    PERL_UNUSED_VAR(affix);
+    *(bool *)c_ptr = SvTRUE(perl_sv);
 }
-/**
- * @brief Executor for marshalling a C pointer from a Perl SV.
- * Handles various cases: pinned variables, references (for "out" params),
- * raw strings, and undef (for NULL).
- */
-void plan_step_push_pointer(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer) {
+
+// --- Define primitive push executors ---
+DEFINE_PUSH_PRIMITIVE_EXECUTOR(bool, bool, SvTRUE)
+DEFINE_PUSH_PRIMITIVE_EXECUTOR(sint8, int8_t, SvIV)
+DEFINE_PUSH_PRIMITIVE_EXECUTOR(uint8, uint8_t, SvUV)
+DEFINE_PUSH_PRIMITIVE_EXECUTOR(sint16, int16_t, SvIV)
+DEFINE_PUSH_PRIMITIVE_EXECUTOR(uint16, uint16_t, SvUV)
+DEFINE_PUSH_PRIMITIVE_EXECUTOR(sint32, int32_t, SvIV)
+DEFINE_PUSH_PRIMITIVE_EXECUTOR(uint32, uint32_t, SvUV)
+DEFINE_PUSH_PRIMITIVE_EXECUTOR(sint64, int64_t, SvIV)
+DEFINE_PUSH_PRIMITIVE_EXECUTOR(uint64, uint64_t, SvUV)
+DEFINE_PUSH_PRIMITIVE_EXECUTOR(float, float, SvNV)
+DEFINE_PUSH_PRIMITIVE_EXECUTOR(double, double, SvNV)
+DEFINE_PUSH_PRIMITIVE_EXECUTOR(long_double, long double, SvNV)
+
+#if !defined(INFIX_COMPILER_MSVC)
+static void plan_step_push_sint128(pTHX_ Affix * affix,
+                                   Affix_Plan_Step * step,
+                                   SV ** perl_stack_frame,
+                                   void * args_buffer,
+                                   void ** c_args,
+                                   void * ret_buffer) {
+    croak("128-bit integer marshalling not yet implemented");
+}
+static void plan_step_push_uint128(pTHX_ Affix * affix,
+                                   Affix_Plan_Step * step,
+                                   SV ** perl_stack_frame,
+                                   void * args_buffer,
+                                   void ** c_args,
+                                   void * ret_buffer) {
+    croak("128-bit integer marshalling not yet implemented");
+}
+#endif
+
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//                      STATIC DATA & DEFINITIONS
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+static MGVTBL Affix_pin_vtbl = {Affix_get_pin, Affix_set_pin, Affix_len_pin, NULL, Affix_free_pin, NULL, NULL, NULL};
+
+static const Affix_Step_Executor primitive_executors[] = {
+    [INFIX_PRIMITIVE_BOOL] = plan_step_push_bool,
+    [INFIX_PRIMITIVE_SINT8] = plan_step_push_sint8,
+    [INFIX_PRIMITIVE_UINT8] = plan_step_push_uint8,
+    [INFIX_PRIMITIVE_SINT16] = plan_step_push_sint16,
+    [INFIX_PRIMITIVE_UINT16] = plan_step_push_uint16,
+    [INFIX_PRIMITIVE_SINT32] = plan_step_push_sint32,
+    [INFIX_PRIMITIVE_UINT32] = plan_step_push_uint32,
+    [INFIX_PRIMITIVE_SINT64] = plan_step_push_sint64,
+    [INFIX_PRIMITIVE_UINT64] = plan_step_push_uint64,
+    [INFIX_PRIMITIVE_FLOAT] = plan_step_push_float,
+    [INFIX_PRIMITIVE_DOUBLE] = plan_step_push_double,
+    [INFIX_PRIMITIVE_LONG_DOUBLE] = plan_step_push_long_double,
+#if !defined(INFIX_COMPILER_MSVC)
+    [INFIX_PRIMITIVE_SINT128] = plan_step_push_sint128,
+    [INFIX_PRIMITIVE_UINT128] = plan_step_push_uint128,
+#endif
+};
+
+static const Affix_Push_Handler primitive_push_handlers[] = {
+    [INFIX_PRIMITIVE_BOOL] = push_handler_bool,
+    [INFIX_PRIMITIVE_SINT8] = push_handler_sint8,
+    [INFIX_PRIMITIVE_UINT8] = push_handler_uint8,
+    [INFIX_PRIMITIVE_SINT16] = push_handler_sint16,
+    [INFIX_PRIMITIVE_UINT16] = push_handler_uint16,
+    [INFIX_PRIMITIVE_SINT32] = push_handler_sint32,
+    [INFIX_PRIMITIVE_UINT32] = push_handler_uint32,
+    [INFIX_PRIMITIVE_SINT64] = push_handler_sint64,
+    [INFIX_PRIMITIVE_UINT64] = push_handler_uint64,
+    [INFIX_PRIMITIVE_FLOAT] = push_handler_float,
+    [INFIX_PRIMITIVE_DOUBLE] = push_handler_double,
+    [INFIX_PRIMITIVE_LONG_DOUBLE] = push_handler_long_double,
+};
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//                      COMPLEX TYPE STEP EXECUTORS
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+static void plan_step_push_pointer(pTHX_ Affix * affix,
+                                   Affix_Plan_Step * step,
+                                   SV ** perl_stack_frame,
+                                   void * args_buffer,
+                                   void ** c_args,
+                                   void * ret_buffer) {
     PERL_UNUSED_VAR(ret_buffer);
     const infix_type * type = step->data.type;
     SV * sv = perl_stack_frame[step->data.index];
-    void * c_arg_ptr = infix_arena_alloc(affix->args_arena, infix_type_get_size(type), infix_type_get_alignment(type));
+    void * c_arg_ptr = (char *)args_buffer + step->data.c_arg_offset;
     c_args[step->data.index] = c_arg_ptr;
+
     if (is_pin(aTHX_ sv)) {
         *(void **)c_arg_ptr = _get_pin_from_sv(aTHX_ sv)->pointer;
         return;
@@ -155,11 +246,8 @@ void plan_step_push_pointer(
                 (inner_pointee_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8 ||
                  inner_pointee_type->meta.primitive_id == INFIX_PRIMITIVE_UINT8)) {
                 if (SvPOK(rv)) {
-                    // Allocate space for one `char*` in the arena.
                     char ** ptr_slot = (char **)infix_arena_alloc(affix->args_arena, sizeof(char *), _Alignof(char *));
-                    // Point it to the buffer of the referenced Perl scalar.
                     *ptr_slot = SvPV_nolen(rv);
-                    // The C argument is the address of our slot.
                     *(void **)c_arg_ptr = ptr_slot;
                     return;
                 }
@@ -182,7 +270,6 @@ void plan_step_push_pointer(
             *(void **)c_arg_ptr = c_array;
             return;
         }
-        // Scalar reference -> pointer to value (for "out" parameters)
         const infix_type * copy_type = (pointee_type->category == INFIX_TYPE_VOID)
             ? (SvIOK(rv)       ? infix_type_create_primitive(INFIX_PRIMITIVE_SINT64)
                    : SvNOK(rv) ? infix_type_create_primitive(INFIX_PRIMITIVE_DOUBLE)
@@ -205,35 +292,35 @@ void plan_step_push_pointer(
         *(const char **)c_arg_ptr = SvPV_nolen(sv);
         return;
     }
-
     PING;
     sv_dump(sv);
-
     char signature_buf[256];
     (void)infix_type_print(signature_buf, sizeof(signature_buf), (infix_type *)type, INFIX_DIALECT_SIGNATURE);
     croak("Don't know how to handle this type of scalar as a pointer argument yet: %s", signature_buf);
 }
-/**
- * @brief Executor for marshalling a Perl HASH ref into a C struct.
- */
-void plan_step_push_struct(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer) {
+static void plan_step_push_struct(pTHX_ Affix * affix,
+                                  Affix_Plan_Step * step,
+                                  SV ** perl_stack_frame,
+                                  void * args_buffer,
+                                  void ** c_args,
+                                  void * ret_buffer) {
     PERL_UNUSED_VAR(ret_buffer);
     const infix_type * type = step->data.type;
     SV * sv = perl_stack_frame[step->data.index];
-    void * c_arg_ptr = infix_arena_alloc(affix->args_arena, infix_type_get_size(type), infix_type_get_alignment(type));
+    void * c_arg_ptr = (char *)args_buffer + step->data.c_arg_offset;
     c_args[step->data.index] = c_arg_ptr;
     push_struct(aTHX_ affix, type, sv, c_arg_ptr);
 }
-/**
- * @brief Executor for marshalling a Perl HASH ref into a C union.
- */
-void plan_step_push_union(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer) {
+static void plan_step_push_union(pTHX_ Affix * affix,
+                                 Affix_Plan_Step * step,
+                                 SV ** perl_stack_frame,
+                                 void * args_buffer,
+                                 void ** c_args,
+                                 void * ret_buffer) {
     PERL_UNUSED_VAR(ret_buffer);
     const infix_type * type = step->data.type;
     SV * sv = perl_stack_frame[step->data.index];
-    void * c_arg_ptr = infix_arena_alloc(affix->args_arena, infix_type_get_size(type), infix_type_get_alignment(type));
+    void * c_arg_ptr = (char *)args_buffer + step->data.c_arg_offset;
     c_args[step->data.index] = c_arg_ptr;
     if (!SvROK(sv) || SvTYPE(SvRV(sv)) != SVt_PVHV)
         croak("Expected a HASH reference for union marshalling");
@@ -242,7 +329,7 @@ void plan_step_push_union(
         return;
     HE * he = hv_iternext(hv);
     if (!he)
-        return;  // Empty hash
+        return;
     const char * key = HeKEY(he);
     STRLEN key_len = HeKLEN(he);
     SV * value_sv = HeVAL(he);
@@ -255,43 +342,42 @@ void plan_step_push_union(
     }
     croak("Union member '%s' not found in type definition", key);
 }
-/**
- * @brief Executor for marshalling a Perl ARRAY ref into a C array.
- */
-void plan_step_push_array(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer) {
+static void plan_step_push_array(pTHX_ Affix * affix,
+                                 Affix_Plan_Step * step,
+                                 SV ** perl_stack_frame,
+                                 void * args_buffer,
+                                 void ** c_args,
+                                 void * ret_buffer) {
     PERL_UNUSED_VAR(ret_buffer);
     const infix_type * type = step->data.type;
     SV * sv = perl_stack_frame[step->data.index];
-    // ABI RULE: In C, a function parameter declared as an array (e.g., char s[20])
-    // is "adjusted" to a pointer parameter (char *s). We must emulate this.
-    // The FFI call needs a pointer, not the value of the array itself.
-    void * temp_buffer = infix_arena_alloc(affix->args_arena, type->size, type->alignment);
+    void * temp_buffer = (char *)args_buffer + step->data.c_arg_offset;
     push_array(aTHX_ affix, type, sv, temp_buffer);
-    // The actual argument passed to the function is the pointer to our temp buffer.
     c_args[step->data.index] = temp_buffer;
 }
-/**
- * @brief Executor for marshalling a Perl number into a C enum.
- */
-void plan_step_push_enum(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer) {
+static void plan_step_push_enum(pTHX_ Affix * affix,
+                                Affix_Plan_Step * step,
+                                SV ** perl_stack_frame,
+                                void * args_buffer,
+                                void ** c_args,
+                                void * ret_buffer) {
     PERL_UNUSED_VAR(ret_buffer);
     const infix_type * type = step->data.type;
     SV * sv = perl_stack_frame[step->data.index];
-    void * c_arg_ptr = infix_arena_alloc(affix->args_arena, infix_type_get_size(type), infix_type_get_alignment(type));
+    void * c_arg_ptr = (char *)args_buffer + step->data.c_arg_offset;
     c_args[step->data.index] = c_arg_ptr;
     sv2ptr(aTHX_ affix, sv, c_arg_ptr, type->meta.enum_info.underlying_type);
 }
-/**
- * @brief Executor for marshalling a Perl 2-element array ref into a C _Complex number.
- */
-void plan_step_push_complex(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer) {
+static void plan_step_push_complex(pTHX_ Affix * affix,
+                                   Affix_Plan_Step * step,
+                                   SV ** perl_stack_frame,
+                                   void * args_buffer,
+                                   void ** c_args,
+                                   void * ret_buffer) {
     PERL_UNUSED_VAR(ret_buffer);
     const infix_type * type = step->data.type;
     SV * sv = perl_stack_frame[step->data.index];
-    void * c_arg_ptr = infix_arena_alloc(affix->args_arena, infix_type_get_size(type), infix_type_get_alignment(type));
+    void * c_arg_ptr = (char *)args_buffer + step->data.c_arg_offset;
     c_args[step->data.index] = c_arg_ptr;
     if (!SvROK(sv) || SvTYPE(SvRV(sv)) != SVt_PVAV)
         croak("Expected an ARRAY reference with two numbers for complex type marshalling");
@@ -307,15 +393,16 @@ void plan_step_push_complex(
     sv2ptr(aTHX_ affix, *real_sv_ptr, c_arg_ptr, base_type);
     sv2ptr(aTHX_ affix, *imag_sv_ptr, (char *)c_arg_ptr + base_size, base_type);
 }
-/**
- * @brief Executor for marshalling a Perl array ref into a C SIMD vector.
- */
-void plan_step_push_vector(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer) {
+static void plan_step_push_vector(pTHX_ Affix * affix,
+                                  Affix_Plan_Step * step,
+                                  SV ** perl_stack_frame,
+                                  void * args_buffer,
+                                  void ** c_args,
+                                  void * ret_buffer) {
     PERL_UNUSED_VAR(ret_buffer);
     const infix_type * type = step->data.type;
     SV * sv = perl_stack_frame[step->data.index];
-    void * c_arg_ptr = infix_arena_alloc(affix->args_arena, infix_type_get_size(type), infix_type_get_alignment(type));
+    void * c_arg_ptr = (char *)args_buffer + step->data.c_arg_offset;
     c_args[step->data.index] = c_arg_ptr;
     if (!SvROK(sv) || SvTYPE(SvRV(sv)) != SVt_PVAV)
         croak("Expected an ARRAY reference for vector marshalling");
@@ -336,57 +423,64 @@ void plan_step_push_vector(
         }
     }
 }
-/**
- * @brief Executor for passing a raw SV* to C.
- */
-void plan_step_push_sv(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer) {
+static void plan_step_push_sv(pTHX_ Affix * affix,
+                              Affix_Plan_Step * step,
+                              SV ** perl_stack_frame,
+                              void * args_buffer,
+                              void ** c_args,
+                              void * ret_buffer) {
+    PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(ret_buffer);
-    const infix_type * type = step->data.type;
     SV * sv = perl_stack_frame[step->data.index];
-    void * c_arg_ptr = infix_arena_alloc(affix->args_arena, infix_type_get_size(type), infix_type_get_alignment(type));
+    void * c_arg_ptr = (char *)args_buffer + step->data.c_arg_offset;
     c_args[step->data.index] = c_arg_ptr;
     SvREFCNT_inc(sv);
     *(void **)c_arg_ptr = sv;
 }
-/**
- * @brief Executor for creating and passing a C callback from a Perl coderef.
- */
-void plan_step_push_callback(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer) {
+static void plan_step_push_callback(pTHX_ Affix * affix,
+                                    Affix_Plan_Step * step,
+                                    SV ** perl_stack_frame,
+                                    void * args_buffer,
+                                    void ** c_args,
+                                    void * ret_buffer) {
     PERL_UNUSED_VAR(ret_buffer);
     const infix_type * type = step->data.type;
     SV * sv = perl_stack_frame[step->data.index];
-    void * c_arg_ptr = infix_arena_alloc(affix->args_arena, infix_type_get_size(type), infix_type_get_alignment(type));
+    void * c_arg_ptr = (char *)args_buffer + step->data.c_arg_offset;
     c_args[step->data.index] = c_arg_ptr;
     push_reverse_trampoline(aTHX_ affix, type, sv, c_arg_ptr);
 }
-/**
- * @brief Executor that performs the actual FFI call.
- */
-void plan_step_call_c_function(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer) {
+static void plan_step_call_c_function(pTHX_ Affix * affix,
+                                      Affix_Plan_Step * step,
+                                      SV ** perl_stack_frame,
+                                      void * args_buffer,
+                                      void ** c_args,
+                                      void * ret_buffer) {
     PERL_UNUSED_VAR(step);
     PERL_UNUSED_VAR(perl_stack_frame);
+    PERL_UNUSED_VAR(args_buffer);
     affix->cif(ret_buffer, c_args);
 }
-/**
- * @brief Executor that marshals the C return value back to a Perl SV.
- */
-void plan_step_pull_return_value(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer) {
+static void plan_step_pull_return_value(pTHX_ Affix * affix,
+                                        Affix_Plan_Step * step,
+                                        SV ** perl_stack_frame,
+                                        void * args_buffer,
+                                        void ** c_args,
+                                        void * ret_buffer) {
     PERL_UNUSED_VAR(perl_stack_frame);
+    PERL_UNUSED_VAR(args_buffer);
     PERL_UNUSED_VAR(c_args);
-    affix->return_sv = step->data.pull_handler(aTHX_ affix, step->data.type, ret_buffer);
+    step->data.pull_handler(aTHX_ affix, affix->return_sv, step->data.type, ret_buffer);
 }
-/**
- * @brief Selects the correct step executor function based on the infix type category.
- * This is the core of the "compiler" part of Affix_affix.
- */
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//                      HANDLER RESOLUTION
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Affix_Step_Executor get_plan_step_executor(const infix_type * type) {
     switch (type->category) {
     case INFIX_TYPE_PRIMITIVE:
-        return plan_step_push_primitive;
+        // Return the pre-resolved function pointer for the specific primitive type.
+        return primitive_executors[type->meta.primitive_id];
     case INFIX_TYPE_POINTER:
         {
             const char * name = infix_type_get_name(type);
@@ -412,76 +506,94 @@ Affix_Step_Executor get_plan_step_executor(const infix_type * type) {
         return NULL;
     }
 }
-/**
- * @brief The refactored XSUB that is called every time an affixed function is invoked.
- * This function is now a simple, fast "dumb executor" for the pre-compiled plan.
- */
+static void writeback_primitive(pTHX_ Affix * affix, const OutParamInfo * info, SV * perl_sv, void * c_arg_ptr) {
+    void * actual_data_ptr = *(void **)c_arg_ptr;
+    ptr2sv(aTHX_ affix, actual_data_ptr, perl_sv, info->pointee_type);
+}
+static void writeback_struct(pTHX_ Affix * affix, const OutParamInfo * info, SV * perl_sv, void * c_arg_ptr) {
+    if (SvTYPE(perl_sv) == SVt_PVHV) {
+        void * struct_ptr = *(void **)c_arg_ptr;
+        _populate_hv_from_c_struct(aTHX_ affix, (HV *)perl_sv, info->pointee_type, struct_ptr);
+    }
+}
+static void writeback_pointer_to_string(pTHX_ Affix * affix,
+                                        const OutParamInfo * info,
+                                        SV * perl_sv,
+                                        void * c_arg_ptr) {
+    PERL_UNUSED_VAR(affix);
+    PERL_UNUSED_VAR(info);
+    sv_setpv(perl_sv, **(char ***)c_arg_ptr);
+}
+static void writeback_pointer_generic(pTHX_ Affix * affix, const OutParamInfo * info, SV * perl_sv, void * c_arg_ptr) {
+    if (SvROK(perl_sv)) {
+        void * inner_ptr = *(void **)c_arg_ptr;
+        ptr2sv(aTHX_ affix, inner_ptr, SvRV(perl_sv), info->pointee_type->meta.pointer_info.pointee_type);
+    }
+}
+Affix_Out_Param_Writer get_out_param_writer(const infix_type * pointee_type) {
+    if (pointee_type->category == INFIX_TYPE_STRUCT)
+        return writeback_struct;
+    if (pointee_type->category == INFIX_TYPE_POINTER) {
+        const infix_type * inner_pointee_type = pointee_type->meta.pointer_info.pointee_type;
+        if (inner_pointee_type->category == INFIX_TYPE_PRIMITIVE &&
+            (inner_pointee_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8 ||
+             inner_pointee_type->meta.primitive_id == INFIX_PRIMITIVE_UINT8)) {
+            return writeback_pointer_to_string;
+        }
+        return writeback_pointer_generic;
+    }
+    return writeback_primitive;
+}
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//                      MAIN TRIGGER & XS FUNCTIONS
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 void Affix_trigger(pTHX_ CV * cv) {
     dSP;
     dAXMARK;
     Affix * affix = (Affix *)CvXSUBANY(cv).any_ptr;
-    if (!affix)
-        croak("Internal error: Affix context is NULL in trigger");
-    size_t num_args = infix_forward_get_num_args(affix->infix);
-    if ((SP - MARK) != num_args)
+    //~ if (!affix)
+    //~ croak("Internal error: Affix context is NULL in trigger");
+
+    if ((SP - MARK) != affix->num_args)
         croak("Wrong number of arguments to affixed function. Expected %" UVuf ", got %" UVuf,
-              (UV)num_args,
+              (UV)affix->num_args,
               (UV)(SP - MARK));
-    // Get a direct pointer to the stack frame. THIS IS CRITICAL.
-    // Helper functions (plan executors) cannot use ST(i) because it relies
-    // on a local variable 'ax'. We must pass this frame pointer explicitly.
+
     SV ** perl_stack_frame = &ST(0);
-    // Reset the arenas for this call.
+
     affix->args_arena->current_offset = 0;
     affix->ret_arena->current_offset = 0;
-    // Allocate the C argument array and return buffer from the arenas.
-    void ** c_args = infix_arena_alloc(affix->args_arena, sizeof(void *) * num_args, _Alignof(void *));
+
+    void * args_buffer = infix_arena_alloc(affix->args_arena, affix->total_args_size, 16);
     const infix_type * ret_type = infix_forward_get_return_type(affix->infix);
     void * ret_buffer =
         infix_arena_alloc(affix->ret_arena, infix_type_get_size(ret_type), infix_type_get_alignment(ret_type));
-    // --- Main Execution Loop ---
+
+    void * c_args[affix->num_args ? affix->num_args : 1];
+
     for (size_t i = 0; i < affix->plan_length; ++i)
-        affix->plan[i].executor(aTHX_ affix, &affix->plan[i], perl_stack_frame, c_args, ret_buffer);
-    // --- Out-Parameter Write-Back ---
-    if (affix->num_out_params > 0) {
-        for (size_t i = 0; i < affix->num_out_params; ++i) {
-            OutParamInfo info = affix->out_param_info[i];
-            SV * arg_sv = perl_stack_frame[info.perl_stack_index];
-            // Only write back to non-pinned references
-            if (SvROK(arg_sv) && !is_pin(aTHX_ arg_sv)) {
-                SV * rsv = SvRV(arg_sv);
-                if (SvTYPE(rsv) == SVt_PVAV)
-                    continue;
-                void * data_ptr = c_args[info.perl_stack_index];
-                if (info.pointee_type->category == INFIX_TYPE_POINTER) {
-                    const infix_type * inner_pointee_type = info.pointee_type->meta.pointer_info.pointee_type;
-                    if (inner_pointee_type->category == INFIX_TYPE_PRIMITIVE &&
-                        (inner_pointee_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8 ||
-                         inner_pointee_type->meta.primitive_id == INFIX_PRIMITIVE_UINT8)) {
-                        // **char case. data_ptr is a char**.
-                        sv_setpv(rsv, **(char ***)data_ptr);
-                    }
-                    else if (SvROK(rsv)) {
-                        void * inner_ptr = *(void **)data_ptr;
-                        ptr2sv(aTHX_ affix, inner_ptr, SvRV(rsv), inner_pointee_type);
-                    }
-                }
-                else if (info.pointee_type->category == INFIX_TYPE_STRUCT && SvTYPE(rsv) == SVt_PVHV) {
-                    void * struct_ptr = *(void **)data_ptr;
-                    _populate_hv_from_c_struct(aTHX_ affix, (HV *)rsv, info.pointee_type, struct_ptr);
-                }
-                else {
-                    void * actual_data_ptr = *(void **)data_ptr;
-                    ptr2sv(aTHX_ affix, actual_data_ptr, rsv, info.pointee_type);
-                }
-            }
+        affix->plan[i].executor(aTHX_ affix, &affix->plan[i], perl_stack_frame, args_buffer, c_args, ret_buffer);
+
+    //~ if (affix->num_out_params > 0) {
+    for (size_t i = 0; i < affix->num_out_params; ++i) {
+        const OutParamInfo * info = &affix->out_param_info[i];
+        SV * arg_sv = perl_stack_frame[info->perl_stack_index];
+        if (SvROK(arg_sv) && !is_pin(aTHX_ arg_sv)) {
+            SV * rsv = SvRV(arg_sv);
+            if (SvTYPE(rsv) == SVt_PVAV)
+                continue;
+            info->writer(aTHX_ affix, info, rsv, c_args[info->perl_stack_index]);
         }
     }
-    // The final plan step has placed the return SV into affix->return_sv.
-    // This is the only place we should modify the Perl stack.
-    ST(0) = sv_2mortal(affix->return_sv);
-    XSRETURN(1);
+    //~ }
+
+    ST(0) = affix->return_sv;
+    PL_stack_sp = PL_stack_base + ax;
+    return;
 }
+
 static infix_library_t * _get_lib_from_registry(pTHX_ const char * path) {
     dMY_CXT;
     const char * lookup_path = (path == NULL) ? "" : path;
@@ -561,6 +673,7 @@ XS_INTERNAL(Affix_affix) {
     }
     Affix * affix;
     Newxz(affix, 1, Affix);
+    affix->return_sv = newSV(0);
     if (created_implicit_handle)
         affix->lib_handle = lib_handle_for_symbol;
     else
@@ -568,27 +681,42 @@ XS_INTERNAL(Affix_affix) {
     const char * signature = SvPV_nolen(ST(2));
     infix_status status = infix_forward_create(&affix->infix, signature, symbol, MY_CXT.registry);
     if (status != INFIX_SUCCESS) {
+        SvREFCNT_dec(affix->return_sv);
         safefree(affix);
         croak("Failed to parse signature or create trampoline: %s", infix_get_last_error().message);
     }
     affix->cif = infix_forward_get_code(affix->infix);
+    affix->num_args = infix_forward_get_num_args(affix->infix);
     affix->args_arena = infix_arena_create(4096);
     affix->ret_arena = infix_arena_create(1024);
     if (!affix->args_arena || !affix->ret_arena)
         croak("Failed to create memory arenas for FFI call");
-    // Compile the execution plan
-    size_t num_args = infix_forward_get_num_args(affix->infix);
-    affix->plan_length = num_args + 2;  // args + call + return
+
+    affix->plan_length = affix->num_args + 2;
     Newxz(affix->plan, affix->plan_length, Affix_Plan_Step);
-    // Step 1: Compile marshalling steps for each argument
+
+    size_t current_offset = 0;
+    for (size_t i = 0; i < affix->num_args; ++i) {
+        const infix_type * type = infix_forward_get_arg_type(affix->infix, i);
+        size_t alignment = (type->category == INFIX_TYPE_ARRAY) ? type->alignment : infix_type_get_alignment(type);
+        if (alignment == 0)
+            alignment = 1;
+        current_offset = (current_offset + alignment - 1) & ~(alignment - 1);
+        affix->plan[i].data.c_arg_offset = current_offset;
+        size_t size = (type->category == INFIX_TYPE_ARRAY) ? type->size : infix_type_get_size(type);
+        current_offset += size;
+    }
+    affix->total_args_size = current_offset;
+
     size_t out_param_count = 0;
-    OutParamInfo * temp_out_info = safemalloc(sizeof(OutParamInfo) * num_args);
-    for (size_t i = 0; i < num_args; ++i) {
+    OutParamInfo * temp_out_info = safemalloc(sizeof(OutParamInfo) * affix->num_args);
+    for (size_t i = 0; i < affix->num_args; ++i) {
         const infix_type * type = infix_forward_get_arg_type(affix->infix, i);
         affix->plan[i].executor = get_plan_step_executor(type);
         if (affix->plan[i].executor == NULL) {
             safefree(temp_out_info);
             infix_forward_destroy(affix->infix);
+            SvREFCNT_dec(affix->return_sv);
             infix_arena_destroy(affix->args_arena);
             infix_arena_destroy(affix->ret_arena);
             safefree(affix->plan);
@@ -597,17 +725,16 @@ XS_INTERNAL(Affix_affix) {
         }
         affix->plan[i].data.type = type;
         affix->plan[i].data.index = i;
-        // While we're here, identify potential "out" parameters for later write-back.
         if (type->category == INFIX_TYPE_POINTER) {
             const infix_type * pointee_type = type->meta.pointer_info.pointee_type;
             if (pointee_type->category != INFIX_TYPE_REVERSE_TRAMPOLINE && pointee_type->category != INFIX_TYPE_VOID) {
                 temp_out_info[out_param_count].perl_stack_index = i;
                 temp_out_info[out_param_count].pointee_type = pointee_type;
+                temp_out_info[out_param_count].writer = get_out_param_writer(pointee_type);
                 out_param_count++;
             }
         }
     }
-    // Compile the out-param write-back plan
     affix->num_out_params = out_param_count;
     if (out_param_count > 0) {
         affix->out_param_info = safemalloc(sizeof(OutParamInfo) * out_param_count);
@@ -617,27 +744,26 @@ XS_INTERNAL(Affix_affix) {
         affix->out_param_info = NULL;
     }
     safefree(temp_out_info);
-    // Step 2: Compile the C function call step
-    affix->plan[num_args].executor = plan_step_call_c_function;
-    affix->plan[num_args].data.type = NULL;
-    affix->plan[num_args].data.index = 0;
-    // Step 3: Compile the return value marshalling step
+    affix->plan[affix->num_args].executor = plan_step_call_c_function;
+    affix->plan[affix->num_args].data.type = NULL;
+    affix->plan[affix->num_args].data.index = 0;
     const infix_type * ret_type = infix_forward_get_return_type(affix->infix);
-    affix->plan[num_args + 1].executor = plan_step_pull_return_value;
-    affix->plan[num_args + 1].data.type = ret_type;
-    affix->plan[num_args + 1].data.pull_handler = get_pull_handler(ret_type);
-    if (affix->plan[num_args + 1].data.pull_handler == NULL) {
+    affix->plan[affix->num_args + 1].executor = plan_step_pull_return_value;
+    affix->plan[affix->num_args + 1].data.type = ret_type;
+    affix->plan[affix->num_args + 1].data.pull_handler = get_pull_handler(ret_type);
+    if (affix->plan[affix->num_args + 1].data.pull_handler == NULL) {
         infix_forward_destroy(affix->infix);
         infix_arena_destroy(affix->args_arena);
         infix_arena_destroy(affix->ret_arena);
         safefree(affix->plan);
+        SvREFCNT_dec(affix->return_sv);
         if (affix->out_param_info)
             safefree(affix->out_param_info);
         safefree(affix);
         croak("Unsupported return type in signature");
     }
     char prototype_buf[256] = {0};
-    for (size_t i = 0; i < num_args; ++i)
+    for (size_t i = 0; i < affix->num_args; ++i)
         strcat(prototype_buf, "$");
     CV * cv_new = newXSproto_portable(ix == 0 ? rename : NULL, Affix_trigger, __FILE__, prototype_buf);
     if (UNLIKELY(cv_new == NULL))
@@ -680,6 +806,8 @@ XS_INTERNAL(Affix_DESTROY) {
                 }
             }
         }
+        if (affix->return_sv)
+            SvREFCNT_dec(affix->return_sv);
         if (affix->args_arena != NULL)
             infix_arena_destroy(affix->args_arena);
         if (affix->ret_arena != NULL)
@@ -694,214 +822,213 @@ XS_INTERNAL(Affix_DESTROY) {
     }
     XSRETURN_EMPTY;
 }
-// Pull Handlers (C -> Perl)
-SV * pull_sint8(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_sint8(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
-    return newSViv(*(int8_t *)p);
+    sv_setiv(sv, *(int8_t *)p);
 }
-SV * pull_uint8(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_uint8(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
-    return newSVuv(*(uint8_t *)p);
+    sv_setuv(sv, *(uint8_t *)p);
 }
-SV * pull_sint16(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_sint16(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
-    return newSViv(*(int16_t *)p);
+    sv_setiv(sv, *(int16_t *)p);
 }
-SV * pull_uint16(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_uint16(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
-    return newSVuv(*(uint16_t *)p);
+    sv_setuv(sv, *(uint16_t *)p);
 }
-SV * pull_sint32(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_sint32(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
-    return newSViv(*(int32_t *)p);
+    sv_setiv(sv, *(int32_t *)p);
 }
-SV * pull_uint32(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_uint32(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
-    return newSVuv(*(uint32_t *)p);
+    sv_setuv(sv, *(uint32_t *)p);
 }
-SV * pull_sint64(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_sint64(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
-    return newSViv(*(int64_t *)p);
+    sv_setiv(sv, *(int64_t *)p);
 }
-SV * pull_uint64(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_uint64(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
-    return newSVuv(*(uint64_t *)p);
+    sv_setuv(sv, *(uint64_t *)p);
 }
-SV * pull_float(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_float(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
-    return newSVnv(*(float *)p);
+    sv_setnv(sv, *(float *)p);
 }
-SV * pull_double(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_double(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
-    return newSVnv(*(double *)p);
+    sv_setnv(sv, *(double *)p);
 }
-SV * pull_long_double(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_long_double(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
-    return newSVnv(*(long double *)p);
+    sv_setnv(sv, *(long double *)p);
 }
-SV * pull_bool(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_bool(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
-    return newSVbool(*(bool *)p);
+    sv_setbool(sv, *(bool *)p);
 }
-SV * pull_void(pTHX_ Affix * affix, const infix_type * t, void * p) {
+static void pull_void(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(t);
     PERL_UNUSED_VAR(p);
-    return newSV(0);
+    sv_setsv(sv, &PL_sv_undef);
 }
 #if !defined(INFIX_COMPILER_MSVC)
-SV * pull_sint128(pTHX_ Affix * affix, const infix_type * t, void * p) {
-    PERL_UNUSED_VAR(affix);
-    PERL_UNUSED_VAR(t);
-    PERL_UNUSED_VAR(p);
+static void pull_sint128(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     croak("128-bit integer marshalling not yet implemented");
 }
-SV * pull_uint128(pTHX_ Affix * affix, const infix_type * t, void * p) {
-    PERL_UNUSED_VAR(affix);
-    PERL_UNUSED_VAR(t);
-    PERL_UNUSED_VAR(p);
+static void pull_uint128(pTHX_ Affix * affix, SV * sv, const infix_type * t, void * p) {
     croak("128-bit integer marshalling not yet implemented");
 }
 #endif
-SV * pull_struct(pTHX_ Affix * affix, const infix_type * type, void * p) {
-    HV * hv = newHV();
-    for (size_t i = 0; i < type->meta.aggregate_info.num_members; ++i) {
-        const infix_struct_member * member = &type->meta.aggregate_info.members[i];
-        if (member->name) {
-            void * member_ptr = (char *)p + member->offset;
-            SV * member_sv = newSV(0);
-            ptr2sv(aTHX_ affix, member_ptr, member_sv, member->type);
-            hv_store(hv, member->name, strlen(member->name), member_sv, 0);
-        }
+static void pull_struct(pTHX_ Affix * affix, SV * sv, const infix_type * type, void * p) {
+    HV * hv;
+    if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVHV)
+        hv = (HV *)SvRV(sv);
+    else {
+        hv = newHV();
+        sv_setsv(sv, newRV_noinc(MUTABLE_SV(hv)));
     }
-    return newRV_inc(MUTABLE_SV(hv));
+    _populate_hv_from_c_struct(aTHX_ affix, hv, type, p);
 }
-SV * pull_union(pTHX_ Affix * affix, const infix_type * type, void * p) {
-    PERL_UNUSED_VAR(affix);
-    PERL_UNUSED_VAR(type);
-    PERL_UNUSED_VAR(p);
+static void pull_union(pTHX_ Affix * affix, SV * sv, const infix_type * type, void * p) {
     croak("Cannot pull a C union directly; the active member is unknown.");
-    return newSV(0);
 }
-SV * pull_array(pTHX_ Affix * affix, const infix_type * type, void * p) {
+static void pull_array(pTHX_ Affix * affix, SV * sv, const infix_type * type, void * p) {
     const infix_type * element_type = type->meta.array_info.element_type;
     if (element_type->category == INFIX_TYPE_PRIMITIVE &&
         (element_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8 ||
          element_type->meta.primitive_id == INFIX_PRIMITIVE_UINT8)) {
-        return newSVpv((const char *)p, 0);
+        sv_setpv(sv, (const char *)p);
+        return;
     }
-    AV * av = newAV();
+    AV * av;
+    if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVAV) {
+        av = (AV *)SvRV(sv);
+        av_clear(av);
+    }
+    else {
+        av = newAV();
+        sv_setsv(sv, newRV_noinc(MUTABLE_SV(av)));
+    }
     size_t num_elements = type->meta.array_info.num_elements;
     size_t element_size = infix_type_get_size(element_type);
+    av_extend(av, num_elements);
     for (size_t i = 0; i < num_elements; ++i) {
         void * element_ptr = (char *)p + (i * element_size);
         SV * element_sv = newSV(0);
         ptr2sv(aTHX_ affix, element_ptr, element_sv, element_type);
         av_push(av, element_sv);
     }
-    return newRV_inc(MUTABLE_SV(av));
 }
-SV * pull_reverse_trampoline(pTHX_ Affix * affix, const infix_type * type, void * p) {
+static void pull_reverse_trampoline(pTHX_ Affix * affix, SV * sv, const infix_type * type, void * p) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(type);
-    void * func_ptr = *(void **)p;
-    return newSViv(PTR2IV(func_ptr));
+    sv_setiv(sv, PTR2IV(*(void **)p));
 }
-SV * pull_enum(pTHX_ Affix * affix, const infix_type * type, void * p) {
-    SV * sv = newSV(0);
+static void pull_enum(pTHX_ Affix * affix, SV * sv, const infix_type * type, void * p) {
     ptr2sv(aTHX_ affix, p, sv, type->meta.enum_info.underlying_type);
-    return sv;
 }
-SV * pull_complex(pTHX_ Affix * affix, const infix_type * type, void * p) {
-    AV * av = newAV();
+static void pull_complex(pTHX_ Affix * affix, SV * sv, const infix_type * type, void * p) {
+    AV * av;
+    if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVAV) {
+        av = (AV *)SvRV(sv);
+        av_clear(av);
+    }
+    else {
+        av = newAV();
+        sv_setsv(sv, newRV_noinc(MUTABLE_SV(av)));
+    }
     const infix_type * base_type = type->meta.complex_info.base_type;
     size_t base_size = infix_type_get_size(base_type);
-    void * real_ptr = p;
-    void * imag_ptr = (char *)p + base_size;
     SV * real_sv = newSV(0);
-    ptr2sv(aTHX_ affix, real_ptr, real_sv, base_type);
+    ptr2sv(aTHX_ affix, p, real_sv, base_type);
     av_push(av, real_sv);
     SV * imag_sv = newSV(0);
-    ptr2sv(aTHX_ affix, imag_ptr, imag_sv, base_type);
+    ptr2sv(aTHX_ affix, (char *)p + base_size, imag_sv, base_type);
     av_push(av, imag_sv);
-    return newRV_inc(MUTABLE_SV(av));
 }
-SV * pull_vector(pTHX_ Affix * affix, const infix_type * type, void * p) {
-    AV * av = newAV();
+static void pull_vector(pTHX_ Affix * affix, SV * sv, const infix_type * type, void * p) {
+    AV * av;
+    if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVAV) {
+        av = (AV *)SvRV(sv);
+        av_clear(av);
+    }
+    else {
+        av = newAV();
+        sv_setsv(sv, newRV_noinc(MUTABLE_SV(av)));
+    }
     const infix_type * element_type = type->meta.vector_info.element_type;
     size_t num_elements = type->meta.vector_info.num_elements;
     size_t element_size = infix_type_get_size(element_type);
+    av_extend(av, num_elements);
     for (size_t i = 0; i < num_elements; ++i) {
         void * element_ptr = (char *)p + (i * element_size);
         SV * element_sv = newSV(0);
         ptr2sv(aTHX_ affix, element_ptr, element_sv, element_type);
         av_push(av, element_sv);
     }
-    return newRV_inc(MUTABLE_SV(av));
 }
-SV * pull_pointer(pTHX_ Affix * affix, const infix_type * type, void * ptr) {
+static void pull_pointer(pTHX_ Affix * affix, SV * sv, const infix_type * type, void * ptr) {
     void * c_ptr = *(void **)ptr;
-    const infix_type * pointee_type = type->meta.pointer_info.pointee_type;
-    const char * name = infix_type_get_name(type);
-    if (name && strcmp(name, "HeapString") == 0) {
-        Affix_Pin * pin;
-        Newxz(pin, 1, Affix_Pin);
-        pin->pointer = c_ptr;
-        pin->type = type;
-        pin->managed = false;
-        pin->type_arena = NULL;
-        SV * obj_data = newSV(0);
-        sv_setiv(obj_data, PTR2IV(pin));
-        SV * rv = newRV_noinc(obj_data);
-        sv_magicext(obj_data, NULL, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
-        return rv;
+    if (c_ptr == NULL) {
+        sv_setsv(sv, &PL_sv_undef);
+        return;
     }
-    if (c_ptr == NULL)
-        return newSV(0);
+    const infix_type * pointee_type = type->meta.pointer_info.pointee_type;
     switch (pointee_type->category) {
     case INFIX_TYPE_STRUCT:
-        return pull_struct(aTHX_ affix, pointee_type, c_ptr);
+        pull_struct(aTHX_ affix, sv, pointee_type, c_ptr);
+        return;
     case INFIX_TYPE_ARRAY:
-        return pull_array(aTHX_ affix, pointee_type, c_ptr);
+        pull_array(aTHX_ affix, sv, pointee_type, c_ptr);
+        return;
     case INFIX_TYPE_PRIMITIVE:
         if (pointee_type->meta.primitive_id == INFIX_PRIMITIVE_SINT8 ||
             pointee_type->meta.primitive_id == INFIX_PRIMITIVE_UINT8) {
-            return newSVpv((const char *)c_ptr, 0);
+            sv_setpv(sv, (const char *)c_ptr);
+            return;
         }
     default:
         break;
     }
-    Affix_Pin * pin;
-    Newxz(pin, 1, Affix_Pin);
+    Affix_Pin * pin = _get_pin_from_sv(aTHX_ sv);
+    if (!pin) {
+        Newxz(pin, 1, Affix_Pin);
+        SV * obj_data = newSV(0);
+        sv_setiv(obj_data, PTR2IV(pin));
+        SV * rv = newRV_noinc(obj_data);
+        sv_magicext(obj_data, NULL, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
+        sv_setsv(sv, rv);
+        sv_bless(sv, gv_stashpv("Affix::Pin", GV_ADD));
+    }
     pin->pointer = c_ptr;
     pin->type = type;
     pin->managed = false;
-    pin->type_arena = NULL;
-    SV * obj_data = newSV(0);
-    sv_setiv(obj_data, PTR2IV(pin));
-    SV * rv = newRV_noinc(obj_data);
-    sv_magicext(obj_data, NULL, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
-    return rv;
 }
-SV * pull_sv(pTHX_ Affix * affix, const infix_type * type, void * ptr) {
+static void pull_sv(pTHX_ Affix * affix, SV * sv, const infix_type * type, void * ptr) {
     PERL_UNUSED_VAR(affix);
     PERL_UNUSED_VAR(type);
     void * c_ptr = *(void **)ptr;
     if (c_ptr == NULL)
-        return newSV(0);
-    return SvREFCNT_inc((MUTABLE_SV(c_ptr)));
+        sv_setsv(sv, &PL_sv_undef);
+    else
+        sv_setsv(sv, (SV *)c_ptr);
 }
 static const Affix_Pull pull_handlers[] = {[INFIX_PRIMITIVE_BOOL] = pull_bool,
                                            [INFIX_PRIMITIVE_SINT8] = pull_sint8,
@@ -959,60 +1086,13 @@ void ptr2sv(pTHX_ Affix * affix, void * c_ptr, SV * perl_sv, const infix_type * 
             croak("Cannot convert C type to Perl SV. Unsupported type: %s", buffer);
         croak("Cannot convert C type to Perl SV. Unsupported type.");
     }
-    SV * new_sv = h(aTHX_ affix, type, c_ptr);
-    if (new_sv != &PL_sv_undef) {
-        sv_setsv_mg(perl_sv, new_sv);
-        SvREFCNT_dec(new_sv);
-    }
-    else
-        sv_setsv_mg(perl_sv, &PL_sv_undef);
+    h(aTHX_ affix, perl_sv, type, c_ptr);
 }
+
 void sv2ptr(pTHX_ Affix * affix, SV * perl_sv, void * c_ptr, const infix_type * type) {
-    // This is a comprehensive dispatcher, used for recursive calls and pin setting.
-    // It does not use the arena allocator.
     switch (type->category) {
     case INFIX_TYPE_PRIMITIVE:
-        switch (type->meta.primitive_id) {
-        case INFIX_PRIMITIVE_BOOL:
-            *(bool *)c_ptr = SvTRUE(perl_sv);
-            break;
-        case INFIX_PRIMITIVE_SINT8:
-            *(int8_t *)c_ptr = (int8_t)SvIOK(perl_sv) ? SvIV(perl_sv) : 0;
-            break;
-        case INFIX_PRIMITIVE_UINT8:
-            *(uint8_t *)c_ptr = (uint8_t)SvUOK(perl_sv) ? SvUV(perl_sv) : 0;
-            break;
-        case INFIX_PRIMITIVE_SINT16:
-            *(int16_t *)c_ptr = (int16_t)SvIOK(perl_sv) ? SvIV(perl_sv) : 0;
-            break;
-        case INFIX_PRIMITIVE_UINT16:
-            *(uint16_t *)c_ptr = (uint16_t)SvUOK(perl_sv) ? SvUV(perl_sv) : 0;
-            break;
-        case INFIX_PRIMITIVE_SINT32:
-            *(int32_t *)c_ptr = (int32_t)SvIOK(perl_sv) ? SvIV(perl_sv) : 0;
-            break;
-        case INFIX_PRIMITIVE_UINT32:
-            *(uint32_t *)c_ptr = (uint32_t)SvUOK(perl_sv) ? SvUV(perl_sv) : 0;
-            break;
-        case INFIX_PRIMITIVE_SINT64:
-            *(int64_t *)c_ptr = (int64_t)SvIOK(perl_sv) ? SvIV(perl_sv) : 0;
-            break;
-        case INFIX_PRIMITIVE_UINT64:
-            *(uint64_t *)c_ptr = (uint64_t)SvUOK(perl_sv) ? SvUV(perl_sv) : 0;
-            break;
-        case INFIX_PRIMITIVE_FLOAT:
-            *(float *)c_ptr = (float)SvNOK(perl_sv) ? SvNV(perl_sv) : 0;
-            break;
-        case INFIX_PRIMITIVE_DOUBLE:
-            *(double *)c_ptr = (double)SvNOK(perl_sv) ? SvNV(perl_sv) : 0;
-            break;
-        case INFIX_PRIMITIVE_LONG_DOUBLE:
-            *(long double *)c_ptr = (long double)SvNOK(perl_sv) ? SvNV(perl_sv) : 0;
-            break;
-            // TODO: 128bit ints
-        default:
-            croak("sv2ptr: unhandled primitive");
-        }
+        primitive_push_handlers[type->meta.primitive_id](aTHX_ affix, perl_sv, c_ptr);
         break;
     case INFIX_TYPE_POINTER:
         {
@@ -1028,8 +1108,6 @@ void sv2ptr(pTHX_ Affix * affix, SV * perl_sv, void * c_ptr, const infix_type * 
             else if (SvPOK(perl_sv))
                 *(const char **)c_ptr = SvPV_nolen(perl_sv);
             else if (SvROK(perl_sv) && SvTYPE(SvRV(perl_sv)) == SVt_PVAV) {
-                // Special case for realloc test: marshalling array ref into T*.
-                // This requires allocating new memory. We can't use the arena here.
                 AV * av = (AV *)SvRV(perl_sv);
                 size_t len = av_len(av) + 1;
                 size_t element_size = infix_type_get_size(pointee_type);
@@ -1068,7 +1146,6 @@ void sv2ptr(pTHX_ Affix * affix, SV * perl_sv, void * c_ptr, const infix_type * 
         break;
     }
 }
-// push_struct is now a helper function called by the plan executor or sv2ptr
 void push_struct(pTHX_ Affix * affix, const infix_type * type, SV * sv, void * p) {
     HV * hv;
     if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVHV)
@@ -1123,7 +1200,7 @@ void push_array(pTHX_ Affix * affix, const infix_type * type, SV * sv, void * p)
     }
 }
 void push_reverse_trampoline(pTHX_ Affix * affix, const infix_type * type, SV * sv, void * p) {
-    PERL_UNUSED_VAR(affix);  // Not used in reverse calls
+    PERL_UNUSED_VAR(affix);
     dMY_CXT;
     SV * coderef_cv = NULL;
     if (SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVCV)
@@ -1177,7 +1254,7 @@ void push_reverse_trampoline(pTHX_ Affix * affix, const infix_type * type, SV * 
             *(void **)p = infix_reverse_get_code(reverse_ctx);
         }
     }
-    else if (!SvOK(sv))  // Check for undef
+    else if (!SvOK(sv))
         *(void **)p = NULL;
     else
         croak("Argument for a callback must be a code reference or undef.");
@@ -1296,14 +1373,14 @@ XS_INTERNAL(Affix_get_last_error_message) {
     XSRETURN(1);
 }
 Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv) {
-    if (!sv || !is_pin(aTHX_ sv))
+    if (!sv || !SvOK(sv) || !SvROK(sv) || !SvMAGICAL(SvRV(sv)))
         return NULL;
     MAGIC * mg = mg_findext(SvRV(sv), PERL_MAGIC_ext, &Affix_pin_vtbl);
     if (mg)
         return (Affix_Pin *)mg->mg_ptr;
     return NULL;
 }
-int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg) {
+static int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg) {
     Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
     if (!pin || !pin->pointer || !pin->type)
         return 0;
@@ -1312,20 +1389,15 @@ int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg) {
         type_to_marshal = pin->type->meta.pointer_info.pointee_type;
         if (type_to_marshal->category == INFIX_TYPE_VOID) {
             if (pin->size > 0) {
-                // This is a managed buffer from malloc(). This is a valid operation.
-                // Copy the raw bytes from the Perl scalar into the C buffer.
                 STRLEN perl_len;
                 const char * perl_str = SvPV(sv, perl_len);
-                // Copy up to pin->size bytes to prevent buffer overflow.
                 size_t bytes_to_copy = (perl_len < pin->size) ? perl_len : pin->size;
                 memcpy(pin->pointer, perl_str, bytes_to_copy);
-                // If the Perl string was shorter than the buffer, zero out the rest
-                // to prevent stale data from remaining.
                 if (bytes_to_copy < pin->size)
                     memset((char *)pin->pointer + bytes_to_copy, 0, pin->size - bytes_to_copy);
-                return 0;  // The operation is complete.
+                return 0;
             }
-            else  // This is an opaque handle with no size info. Forbid assignment.
+            else
                 croak("Cannot assign a value to a dereferenced void pointer (opaque handle)");
         }
     }
@@ -1334,7 +1406,7 @@ int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg) {
     sv2ptr(aTHX_ NULL, sv, pin->pointer, type_to_marshal);
     return 0;
 }
-U32 Affix_len_pin(pTHX_ SV * sv, MAGIC * mg) {
+static U32 Affix_len_pin(pTHX_ SV * sv, MAGIC * mg) {
     Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
     if (!pin || !pin->pointer || !pin->type) {
         if (SvTYPE(sv) == SVt_PVAV)
@@ -1343,7 +1415,7 @@ U32 Affix_len_pin(pTHX_ SV * sv, MAGIC * mg) {
     }
     return pin->type->size;
 }
-int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg) {
+static int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg) {
     PERL_UNUSED_VAR(sv);
     Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
     if (pin == NULL)
@@ -1356,7 +1428,7 @@ int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg) {
     mg->mg_ptr = NULL;
     return 0;
 }
-int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg) {
+static int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg) {
     Affix_Pin * pin = (Affix_Pin *)mg->mg_ptr;
     if (!pin || !pin->pointer) {
         sv_setsv_mg(sv, &PL_sv_undef);
@@ -1412,7 +1484,6 @@ void _pin_sv(pTHX_ SV * sv, const infix_type * type, void * pointer, bool manage
         mg = sv_magicext(sv, NULL, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
     }
     pin->pointer = pointer;
-    pin->type = type;
     pin->managed = managed;
     pin->type_arena = infix_arena_create(2048);
     if (!pin->type_arena) {
@@ -1534,7 +1605,9 @@ void _affix_callback_handler_entry(infix_context_t * ctx, void * retval, void **
         Affix_Pull puller = get_pull_handler(type);
         if (!puller)
             croak("Unsupported callback argument type");
-        mXPUSHs(puller(aTHX_ NULL, type, args[i]));
+        SV * arg_sv = newSV(0);
+        puller(aTHX_ NULL, arg_sv, type, args[i]);
+        mXPUSHs(arg_sv);
     }
     PUTBACK;
     const infix_type * ret_type = infix_reverse_get_return_type(ctx);
@@ -1549,7 +1622,6 @@ void _affix_callback_handler_entry(infix_context_t * ctx, void * retval, void **
     else if (call_flags & G_SCALAR) {
         SPAGAIN;
         SV * return_sv = (count == 1) ? POPs : &PL_sv_undef;
-        // Cannot call the executor here easily, so we must use a helper
         sv2ptr(aTHX_ NULL, return_sv, retval, ret_type);
         PUTBACK;
     }
@@ -1715,9 +1787,7 @@ XS_INTERNAL(Affix_sv_dump) {
 static SV * _new_pointer_obj(pTHX_ Affix_Pin * pin) {
     SV * data_sv = newSV(0);
     SV * rv = newRV_inc(data_sv);
-    // Store the pin pointer in the integer slot of the scalar.
     sv_setiv(data_sv, PTR2IV(pin));
-    // Directly attach the pin we were given via magic.
     SvUPGRADE(data_sv, SVt_PVMG);
     sv_magicext(data_sv, NULL, PERL_MAGIC_ext, &Affix_pin_vtbl, (const char *)pin, 0);
     return rv;
@@ -1793,13 +1863,10 @@ XS_INTERNAL(Affix_realloc) {
     if (!pin || !pin->managed)
         croak("Can only realloc a managed pointer");
     UV new_size = SvUV(ST(1));
-    // Store the old size before reallocating.
     size_t old_size = pin->size;
     void * new_ptr = saferealloc(pin->pointer, new_size);
-    // If the buffer was expanded, zero out the new portion.
     if (new_size > old_size)
         memset((char *)new_ptr + old_size, 0, new_size - old_size);
-    // Update the pin with the new pointer and size.
     pin->pointer = new_ptr;
     pin->size = new_size;
     XSRETURN_YES;
@@ -1846,7 +1913,6 @@ XS_INTERNAL(Affix_cast) {
     XSRETURN(1);
 }
 XS_INTERNAL(Affix_dump) {
-    // TODO: Make this look for the pinned var's type and use sizeof calc from infix
     dVAR;
     dXSARGS;
     if (items != 2)

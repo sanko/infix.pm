@@ -45,9 +45,7 @@ START_MY_CXT;
 // Forward-declare the primary structures.
 typedef struct Affix Affix;
 typedef struct Affix_Plan_Step Affix_Plan_Step;
-/// @brief Function pointer type for a "pull" operation: marshalling from C (void*) to Perl (SV).
-/// This is re-used by the new execution plan for the final return value step.
-typedef SV * (*Affix_Pull)(pTHX_ Affix *, const infix_type *, void *);
+typedef struct OutParamInfo OutParamInfo;
 /**
  * @brief The single, homogeneous function pointer signature for all steps in the execution plan.
  * @param pTHX_ The Perl interpreter context.
@@ -57,18 +55,38 @@ typedef SV * (*Affix_Pull)(pTHX_ Affix *, const infix_type *, void *);
  * @param c_args The array of pointers to be passed to the C function.
  * @param ret_buffer A pointer to the memory allocated for the C function's return value.
  */
-typedef void (*Affix_Step_Executor)(
-    pTHX_ Affix * affix, Affix_Plan_Step * step, SV ** perl_stack_frame, void ** c_args, void * ret_buffer);
+typedef void (*Affix_Step_Executor)(pTHX_ Affix * affix,
+                                    Affix_Plan_Step * step,
+                                    SV ** perl_stack_frame,
+                                    void * args_buffer,
+                                    void ** c_args,
+                                    void * ret_buffer);
+/// @brief Function pointer type for a "pull" operation: marshalling from C (void*) to Perl (SV).
+typedef void (*Affix_Pull)(pTHX_ Affix *, SV *, const infix_type *, void *);
+/// @brief Function pointer type for a "push" operation: marshalling from Perl (SV) to C (void*).
+typedef void (*Affix_Push_Handler)(pTHX_ Affix *, SV *, void *);
+/**
+ * @brief Function pointer for a specialized out-parameter write-back handler.
+ * By pre-resolving this function, we avoid conditional logic in the hot path.
+ * @param pTHX_ The Perl interpreter context.
+ * @param affix The main Affix context object.
+ * @param info A pointer to the OutParamInfo struct for this parameter.
+ * @param perl_sv The referenced SV* to be modified (e.g., the scalar backing `$$foo`).
+ * @param c_arg_ptr The pointer from the c_args array (e.g., `T**` for a `T*` out-param).
+ */
+typedef void (*Affix_Out_Param_Writer)(pTHX_ Affix * affix, const OutParamInfo * info, SV * perl_sv, void * c_arg_ptr);
 /// @brief Stores the pre-calculated information needed to write back an "out" parameter.
-typedef struct {
+struct OutParamInfo {
     size_t perl_stack_index;          // Index of the SV* in the perl_stack_frame
     const infix_type * pointee_type;  // The type of the data pointed to (e.g., 'int' for 'int*')
-} OutParamInfo;
+    Affix_Out_Param_Writer writer;    // Pre-resolved handler to perform the write-back.
+};
 /// @brief The data payload for a single step in the execution plan.
 typedef struct {
     const infix_type * type;  // Type info for this step (arg or ret).
     size_t index;             // Index into perl_stack_frame for args, or c_args for out-params.
     Affix_Pull pull_handler;  // Pre-resolved pull handler for the return step.
+    size_t c_arg_offset;      // Pre-calculated offset into the C arguments buffer.
 } Affix_Step_Data;
 /// @brief A single step in the pre-compiled execution plan.
 struct Affix_Plan_Step {
@@ -83,9 +101,11 @@ struct Affix {
     infix_arena_t * ret_arena;     ///< Fast memory allocator for return value during a call.
     infix_cif_func cif;            ///< A direct function pointer to the JIT-compiled trampoline code.
     infix_library_t * lib_handle;  ///< If affix() loaded a library itself, stores the handle for cleanup.
-    SV * return_sv;                ///< Temporary storage for the return SV created by the plan.
+    SV * return_sv;                ///< Pre-allocated, reusable SV to hold the return value.
     Affix_Plan_Step * plan;        ///< The linear array of operations (the "execution plan").
     size_t plan_length;            ///< The total number of steps in the plan.
+    size_t num_args;               ///< Cached number of arguments for faster access.
+    size_t total_args_size;        ///< Pre-calculated total size of the C arguments buffer.
     // Pre-compiled plan for handling "out" parameters after the C call.
     OutParamInfo * out_param_info;
     size_t num_out_params;
@@ -114,60 +134,62 @@ typedef struct {
     infix_library_t * lib;  ///< The handle to the opened library.
     UV ref_count;           ///< Reference count. The library is closed only when this reaches 0.
 } LibRegistryEntry;
-// Function Prototypes for pull handlers (re-used in the execution plan).
-SV * pull_struct(pTHX_ Affix *, const infix_type * type, void * p);
-SV * pull_union(pTHX_ Affix *, const infix_type * type, void * p);
-SV * pull_array(pTHX_ Affix *, const infix_type * type, void * p);
-SV * pull_reverse_trampoline(pTHX_ Affix *, const infix_type * type, void * p);
-SV * pull_enum(pTHX_ Affix *, const infix_type * type, void * p);
-SV * pull_complex(pTHX_ Affix *, const infix_type * type, void * p);
-SV * pull_vector(pTHX_ Affix *, const infix_type * type, void * p);
-// The C function that gets executed when an affixed Perl sub is called.
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//                          FUNCTION PROTOTYPES
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+// --- Main execution trigger ---
 extern void Affix_trigger(pTHX_ CV *);
-// Marshals a C value from a pointer into an existing Perl SV.
-void ptr2sv(pTHX_ Affix * affix, void * c_ptr, SV * perl_sv, const infix_type * type);
-// Marshals a Perl SV's value into a C pointer.
+
+// --- Marshalling (Perl -> C) ---
 void sv2ptr(pTHX_ Affix * affix, SV * perl_sv, void * c_ptr, const infix_type * type);
-// Marshals a Perl HASH ref into a C struct.
 void push_struct(pTHX_ Affix * affix, const infix_type * type, SV * sv, void * p);
-// Attaches a pin to a raw SV, making it magical.
+void push_array(pTHX_ Affix * affix, const infix_type * type, SV * sv, void * p);
+void push_reverse_trampoline(pTHX_ Affix * affix, const infix_type * type, SV * sv, void * p);
+
+// --- Marshalling (C -> Perl) ---
+void ptr2sv(pTHX_ Affix * affix, void * c_ptr, SV * perl_sv, const infix_type * type);
+void _populate_hv_from_c_struct(pTHX_ Affix * affix, HV * hv, const infix_type * type, void * p);
+
+// --- Handler Resolution ---
+Affix_Step_Executor get_plan_step_executor(const infix_type * type);
+Affix_Pull get_pull_handler(const infix_type * type);
+Affix_Out_Param_Writer get_out_param_writer(const infix_type * type);
+
+// --- Pin (Pointer Object) Management ---
 void _pin_sv(pTHX_ SV * sv, const infix_type * type, void * pointer, bool managed);
-// Functions implementing the "magic" for Affix::Pin objects (for dereferencing).
-int Affix_get_pin(pTHX_ SV * sv, MAGIC * mg);
-int Affix_set_pin(pTHX_ SV * sv, MAGIC * mg);
-U32 Affix_len_pin(pTHX_ SV * sv, MAGIC * mg);
-int Affix_free_pin(pTHX_ SV * sv, MAGIC * mg);
 bool is_pin(pTHX_ SV * sv);
-// Internal helper to safely get the Affix_Pin struct from a blessed SV.
 Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv);
-// The C entry point for all reverse-FFI callbacks.
+
+// --- Reverse FFI (Callback) ---
 void _affix_callback_handler_entry(infix_context_t *, void *, void **);
-// A portable way to create a new XS subroutine with a C prototype.
+
+// --- Misc Internals & Helpers ---
+void _export_function(pTHX_ HV *, const char *, const char *);
+
+// --- XS Bootstrap ---
+void boot_Affix(pTHX_ CV *);
+
+// --- Portable XS MACROS ---
 #ifdef newXS_flags
 #define newXSproto_portable(name, c_impl, file, proto) newXS_flags(name, c_impl, file, proto, 0)
 #else
 #define newXSproto_portable(name, c_impl, file, proto) \
     (PL_Sv = (SV *)newXS(name, c_impl, file), sv_setpv(PL_Sv, proto), (CV *)PL_Sv)
 #endif
-// A macro to call Perl's newXS_deffile with the interpreter context.
 #define newXS_deffile(a, b) Perl_newXS_deffile(aTHX_ a, b)
-// Helper to add a function name to a package's export tags (e.g., %EXPORT_TAGS).
 #define export_function(package, what, tag) \
     _export_function(aTHX_ get_hv(form("%s::EXPORT_TAGS", package), GV_ADD), what, tag)
-void _export_function(pTHX_ HV *, const char *, const char *);
-// The main entry point for the entire XS module, called by Perl on `use Affix`.
-void boot_Affix(pTHX_ CV *);
-// Debugging Macros
+
+// --- Debugging Macros ---
 #define DEBUG 0
 #if DEBUG > 1
-// Simple macro to print the file and line number to stderr.
 #define PING warn("Ping at %s line %d", __FILE__, __LINE__);
 #else
 #define PING
 #endif
-// A macro to print a hex dump of a memory region.
 #define DumpHex(addr, len) _DumpHex(aTHX_ addr, len, __FILE__, __LINE__)
 void _DumpHex(pTHX_ const void *, size_t, const char *, int);
-// A macro to dump the internal structure of a Perl SV using Devel::Peek's logic.
 #define DD(scalar) _DD(aTHX_ scalar, __FILE__, __LINE__)
 void _DD(pTHX_ SV *, const char *, int);
