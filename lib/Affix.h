@@ -109,6 +109,8 @@ struct Affix {
     // Pre-compiled plan for handling "out" parameters after the C call.
     OutParamInfo * out_param_info;
     size_t num_out_params;
+    const infix_type * ret_type;
+    void ** c_args;
 };
 /// @brief Represents an Affix::Pin object, a blessed Perl scalar that wraps a raw C pointer.
 typedef struct {

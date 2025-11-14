@@ -45,8 +45,6 @@ package Affix::Type 0.5 {
             alignment => $align,
             typedef   => undef,     # TODO
             const     => !1,
-            volatile  => !1,
-            restrict  => !1,
             depth     => 0,         # pointer depth
 
             # Optional
@@ -71,9 +69,11 @@ package Affix::Type 0.5 {
             *{$fqn} = sub { CORE::state $s //= $type };
             @{ $fqn . '::ISA' } = ref $type;
         }
+        Affix::_typedef( sprintf '@%s = %s;', $fqn =~ s[^main::][]r, $type );
+        warn sprintf '@%s = %s;', $fqn =~ s[^main::][]r, $type;
         bless $type, $fqn;
         $type->{typedef}   = $name;
-        $type->{stringify} = sprintf q[typedef ( %s => %s )], $name =~ /::/ ? "'$name'" : $name, $type->{stringify};
+        $type->{stringify} = sprintf q[@%s], $name;
         push @{ $EXPORT_TAGS{types} }, $name if $fqn eq 'Affix::' . $name;    # only great when triggered by/before import
         my $next = $type->can('typedef');
         $next->( $type, $fqn ) if defined $next && __SUB__ != $next;
@@ -143,16 +143,6 @@ package Affix::Type 0.5 {
         $subtype->{const}     = 1;
         $subtype->{stringify} = 'Const[ ' . $subtype->{stringify} . ' ]';
         $subtype;
-    }
-
-    sub Volatile : prototype($) {
-        $_[0][0]->{volatile} = 1;
-        $_[0][0];
-    }
-
-    sub Restrict : prototype($) {
-        $_[0][0]->{restrict} = 1;
-        $_[0][0];
     }
     @Affix::Type::Void::ISA = @Affix::Type::SV::ISA
 
