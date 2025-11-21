@@ -17,13 +17,6 @@ package Affix::Type 0.5 {
     our ( @EXPORT_OK, %EXPORT_TAGS );
     $EXPORT_TAGS{all} = [
         @EXPORT_OK = qw[
-            Void Bool Char UChar SChar WChar Short UShort Int UInt Long ULong LongLong ULongLong Float Double LongDouble
-            Size_t
-            String WString StdString
-            Pointer
-            SV
-            Const
-            sint8
         ]
     ];
     use overload '""' => sub {
@@ -56,54 +49,29 @@ package Affix::Type 0.5 {
         }, $pkg;
     }
 
-    sub typedef ($$) {
-        my ( $name, $type ) = @_;
-        if ( !$type->isa('Affix::Type') ) {
-            require Carp;
-            Carp::croak( 'Unknown type: ' . $type );
-        }
-        my $fqn = $name =~ /::/ ? $name : [caller]->[0] . '::' . $name;
-        {
-            no strict 'refs';
-            no warnings 'redefine';
-            *{$fqn} = sub { CORE::state $s //= $type };
-            @{ $fqn . '::ISA' } = ref $type;
-        }
-        Affix::_typedef( sprintf '@%s = %s;', $fqn =~ s[^main::][]r, $type );
-        warn sprintf '@%s = %s;', $fqn =~ s[^main::][]r, $type;
-        bless $type, $fqn;
-        $type->{typedef}   = $name;
-        $type->{stringify} = sprintf q[@%s], $name;
-        push @{ $EXPORT_TAGS{types} }, $name if $fqn eq 'Affix::' . $name;    # only great when triggered by/before import
-        my $next = $type->can('typedef');
-        $next->( $type, $fqn ) if defined $next && __SUB__ != $next;
-        $type;
-    }
-
     # Types
-    sub Void()        { Affix::Type::Void->new('void'); }
-    sub Bool()        { Affix::Type::Bool->new('bool'); }
-    sub Char()        { Affix::Type::Char->new('char'); }
-    sub SChar()       { Affix::Type::SChar->new('sint8'); }
-    sub sint8         { Affix::Type::sint8->new('sint8'); }
-    sub UChar()       { Affix::Type::UChar->new('uchar'); }
-    sub WChar()       { Affix::Type::WChar->new('WChar'); }
-    sub Short()       { Affix::Type::Short->new('short'); }
-    sub UShort()      { Affix::Type::UShort->new('ushort'); }
-    sub Int ()        { Affix::Type::Int->new('int'); }
-    sub UInt ()       { Affix::Type::UInt->new('uint'); }
-    sub Long ()       { Affix::Type::Long->new('long'); }
-    sub ULong ()      { Affix::Type::ULong->new('ulong'); }
-    sub LongLong ()   { Affix::Type::LongLong->new('longlong'); }
-    sub ULongLong ()  { Affix::Type::ULongLong->new('ulonglong'); }
-    sub Float ()      { Affix::Type::Float->new('float'); }
-    sub Double ()     { Affix::Type::Double->new('double'); }
-    sub LongDouble () { Affix::Type::LongDouble->new('longdouble'); }
-    sub Size_t ()     { Affix::Type::Size_t->new('Size_t'); }
-    sub String()      { CORE::state $type //= Pointer( [ Const( [ Char() ] ) ] );  $type; }
-    sub WString()     { CORE::state $type //= Pointer( [ Const( [ WChar() ] ) ] ); $type; }
-    sub StdString ()  { Affix::Type::StdString->new('StdString'); }
-
+    #~ sub Void()        { Affix::Type::Void->new('void'); }
+    #~ sub Bool()        { Affix::Type::Bool->new('bool'); }
+    #~ sub Char()        { Affix::Type::Char->new('char'); }
+    #~ sub SChar()       { Affix::Type::SChar->new('sint8'); }
+    #~ sub sint8         { Affix::Type::sint8->new('sint8'); }
+    #~ sub UChar()       { Affix::Type::UChar->new('uchar'); }
+    #~ sub WChar()       { Affix::Type::WChar->new('WChar'); }
+    #~ sub Short()       { Affix::Type::Short->new('short'); }
+    #~ sub UShort()      { Affix::Type::UShort->new('ushort'); }
+    #~ sub Int ()        { Affix::Type::Int->new('int'); }
+    #~ sub UInt ()       { Affix::Type::UInt->new('uint'); }
+    #~ sub Long ()       { Affix::Type::Long->new('long'); }
+    #~ sub ULong ()      { Affix::Type::ULong->new('ulong'); }
+    #~ sub LongLong ()   { Affix::Type::LongLong->new('longlong'); }
+    #~ sub ULongLong ()  { Affix::Type::ULongLong->new('ulonglong'); }
+    #~ sub Float ()      { Affix::Type::Float->new('float'); }
+    #~ sub Double ()     { Affix::Type::Double->new('double'); }
+    #~ sub LongDouble () { Affix::Type::LongDouble->new('longdouble'); }
+    #~ sub Size_t ()     { Affix::Type::Size_t->new('Size_t'); }
+    #~ sub String()      { CORE::state $type //= Pointer( [ Const( [ Char() ] ) ] );  $type; }
+    #~ sub WString()     { CORE::state $type //= Pointer( [ Const( [ WChar() ] ) ] ); $type; }
+    #~ sub StdString ()  { Affix::Type::StdString->new('StdString'); }
     # TODO: CPPStruct
     #~ $pkg, $str, $flag, $sizeof, $align, $offset, $subtype, $array_len
     sub Pointer : prototype($) {
@@ -178,37 +146,8 @@ package Affix::Type 0.5 {
     @Affix::Type::Union::ISA
         #
         = @Affix::Type::Pointer::ISA = @Affix::Type::CodeRef::ISA = @Affix::Type::Function::ISA = 'Affix::Type::Parameterized';
-    @Affix::CC::Reset::ISA = @Affix::CC::This::ISA = @Affix::CC::Ellipsis::ISA = @Affix::CC::Varargs::ISA = @Affix::CC::CDecl::ISA
-        = @Affix::CC::STDcall::ISA = @Affix::CC::MSFastcall::ISA = @Affix::CC::GNUFastcall::ISA = @Affix::CC::MSThis::ISA = @Affix::CC::GNUThis::ISA
-        = @Affix::CC::Arm::ISA     = @Affix::CC::Thumb::ISA      = @Affix::CC::Syscall::ISA     = 'Affix::CC';
-
-    sub Reference : prototype(;$) {    # [ text, id, size, align, offset, subtype, sizeof, package ]
-
-        #~ use Data::Dump;
-        #~ ddx \@_;
-        my $sizeof  = 0;
-        my $packed  = 0;
-        my $subtype = undef;
-        if (@_) {
-            ($subtype) = @{ +shift };
-
-            #~ ddx $subtype;
-            my $__sizeof = $subtype->sizeof;
-            my $__align  = $subtype->align;
-            $sizeof += $packed ? 0 : padding_needed_for( $sizeof, $__align > $__sizeof ? $__sizeof : $__align );
-            $sizeof += $__sizeof;
-        }
-        else {
-            warn scalar caller;
-            Carp::croak 'Reference requires a type' unless scalar caller =~ /^Affix(::.+)?$/;
-            $subtype = Void();    # Defaults to Pointer[Void]
-        }
-        bless( [ 'Reference [ ' . $subtype . ' ]', REFERENCE_FLAG(), $subtype->sizeof(), $subtype->align(), undef, $subtype, $sizeof, undef ],
-            'Affix::Flag::Reference' );
-    }
-    #
     sub This() { bless( [ 'This', THIS_FLAG(), undef, undef, undef ], 'Affix::CC::This' ); }
     #
-    sub intptr_t { Pointer [Void] }
+    #~ sub intptr_t { Pointer [Void] }
 }
 1;

@@ -1,4 +1,7 @@
 #pragma once
+
+#define DEBUG 10
+
 // Disables the implicit 'pTHX_' context pointer argument, which is good practice for
 // modern Perl XS code that uses the 'aTHX_' macro explicitly.
 #define PERL_NO_GET_CONTEXT 1
@@ -15,6 +18,7 @@
 #define infix_calloc safecalloc
 #define infix_free safefree
 #define infix_realloc saferealloc
+
 #include "common/infix_internals.h"
 #include <infix/infix.h>
 // This structure defines the thread-local storage for our module. Under ithreads,
@@ -42,8 +46,11 @@ START_MY_CXT;
 #define storeTHX(var) dNOOP
 #define dTHXfield(var)
 #endif
+
+
 // Forward-declare the primary structures.
 typedef struct Affix Affix;
+typedef struct Affix_Backend Affix_Backend;
 typedef struct Affix_Plan_Step Affix_Plan_Step;
 typedef struct OutParamInfo OutParamInfo;
 /**
@@ -62,9 +69,9 @@ typedef void (*Affix_Step_Executor)(pTHX_ Affix * affix,
                                     void ** c_args,
                                     void * ret_buffer);
 /// @brief Function pointer type for a "pull" operation: marshalling from C (void*) to Perl (SV).
-typedef void (*Affix_Pull)(pTHX_ Affix *, SV *, const infix_type *, void *);
+typedef void (*Affix_Pull)(pTHX_ Affix * affix, SV *, const infix_type *, void *);
 /// @brief Function pointer type for a "push" operation: marshalling from Perl (SV) to C (void*).
-typedef void (*Affix_Push_Handler)(pTHX_ Affix *, SV *, void *);
+typedef void (*Affix_Push_Handler)(pTHX_ Affix * affix, SV *, void *);
 /**
  * @brief Function pointer for a specialized out-parameter write-back handler.
  * By pre-resolving this function, we avoid conditional logic in the hot path.
@@ -110,6 +117,7 @@ struct Affix {
     OutParamInfo * out_param_info;
     size_t num_out_params;
     const infix_type * ret_type;
+    Affix_Pull ret_pull_handler;  ///< Cached handler for marshalling the return value.
     void ** c_args;
 };
 /// @brief Represents an Affix::Pin object, a blessed Perl scalar that wraps a raw C pointer.
@@ -136,6 +144,21 @@ typedef struct {
     infix_library_t * lib;  ///< The handle to the opened library.
     UV ref_count;           ///< Reference count. The library is closed only when this reaches 0.
 } LibRegistryEntry;
+
+
+// --- NEW ---: Struct for the Direct Marshalling (aka "bundle") backend.
+/// @brief Represents a forward FFI call created with the high-performance direct marshalling API.
+struct Affix_Backend {
+    infix_forward_t * infix;       ///< Handle to the infix trampoline and type info.
+    infix_direct_cif_func cif;     ///< Direct pointer to the specialized JIT code.
+    infix_library_t * lib_handle;  ///< Handle for library cleanup.
+    const infix_type * ret_type;   ///< Cached return type info.
+    Affix_Pull pull_handler;       ///< Pre-resolved handler for marshalling the return value.
+    size_t num_args;               ///< Cached number of arguments.
+};
+
+// --- NEW ---: Trigger function for the new backend.
+extern void Affix_trigger_backend(pTHX_ CV *);
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //                          FUNCTION PROTOTYPES
@@ -185,7 +208,6 @@ void boot_Affix(pTHX_ CV *);
     _export_function(aTHX_ get_hv(form("%s::EXPORT_TAGS", package), GV_ADD), what, tag)
 
 // --- Debugging Macros ---
-#define DEBUG 0
 #if DEBUG > 1
 #define PING warn("Ping at %s line %d", __FILE__, __LINE__);
 #else

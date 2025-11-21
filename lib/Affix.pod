@@ -16,7 +16,6 @@ Affix - A Foreign Function Interface eXtension
     # wrap an exported function in a code reference
     my $getpid = wrap libc, 'getpid', [], Int;   # '_getpid' on Win32
     warn $getpid->();                            # $$
-    warn getpid();                               # $$
 
     # bind to an exported function with a different name
     affix libc, ['getpid', 'get_process_id'], [], Int;
@@ -137,7 +136,6 @@ This is the type that the function returns. For example, C<Double> indicates tha
 double-precision floating-point number. The return type can be any of the L<Types|/Types> supported by Affix, such as
 C<Void>, C<Bool>, C<Char>, C<Int>, C<Double>, etc. You can also use aggregates like C<Struct>, C<Array>,
 C<Union>, and C<Enum> to define more complex return types.
-
 
 =back
 
@@ -527,6 +525,8 @@ Represents a floating-point number. Used for functions that take or return float
 
 Represents a double-precision floating-point number. Used for functions that take or return double-precision numbers.
 
+=item C<LongDouble>
+
 =item C<String>
 
 Represents a string of characters. Used for functions that take or return strings.
@@ -574,6 +574,12 @@ The values are defined as a list of name-value pairs, where each name is a strin
 type is an Affix type that specifies the underlying type of the enumeration. This allows for more control over the
 size and representation of the enumeration values.
 
+=item C<Vector[Size, Type]>
+
+=item C<Int128>
+
+=item C<UInt128>
+
 =back
 
 =head1 Calling into the Standard Library
@@ -615,24 +621,9 @@ to stick to Major version, some BSD code does not care for Minor.)
     affix ['foo', v1], ...;       # Will try to load libfoo.so.1 on Unix
     affix ['foo', v1.2.3], ...;   # Will try to load libfoo.so.1.2.3 on Unix
 
-=head1 Stack Size
-
-You may control the max size of the internal stack that will be allocated and used to bind the arguments to by setting
-the C<$VMSize> variable before using Affix.
-
-    BEGIN{ $Affix::VMSize = 2 ** 16; }
-
-This value is C<4096> by default and probably should not be changed.
 
 =head1 See Also
 
-All the heavy lifting is done by L<dyncall|https://dyncall.org/>.
-
-Check out L<FFI::Platypus> for a more robust and mature FFI
-
-L<LibUI> for a larger demo project based on Affix
-
-L<Types::Standard> for the inspiration of the advisory types system
 
 =head1 LICENSE
 

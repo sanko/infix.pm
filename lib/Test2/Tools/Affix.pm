@@ -2,7 +2,6 @@ package Test2::Tools::Affix 0.09 {
     use v5.40;
     use blib;
     use Affix;
-    use Affix::Compiler;
     use Test2::API qw[context run_subtest];
     use Test2::V0 -no_srand => 1, '!subtest';
     use Test2::Util::Importer 'Test2::Tools::Subtest' => ( subtest_streamed => { -as => 'subtest' } );
@@ -11,6 +10,7 @@ package Test2::Tools::Affix 0.09 {
     use Path::Tiny qw[path tempfile];
     use Exporter 'import';
     use Capture::Tiny ':all';
+    our @CARP_NOT;
     our %EXPORT_TAGS = (
         all => [
             our @EXPORT
@@ -23,7 +23,7 @@ package Test2::Tools::Affix 0.09 {
                 U D T F DNE array string float number bool hash etc end
                 refcount
                 can_ok isa_ok
-                capture imported_ok]
+                capture imported_ok warns]
         ]
     );
     #
@@ -43,10 +43,7 @@ package Test2::Tools::Affix 0.09 {
     }
     #
     sub compile_ok( $name, $aggs //= '', $keep //= 0 ) {
-        my $c = context();
-
-        #~ return $c->pass_and_release($name) if 1;
-        #~ return $c->fail_and_release($name, @diag);
+        my $c     = context();
         my ($opt) = grep { -f $_ } "t/src/$name.cxx", "t/src/$name.c", "src/$name.cxx", "src/$name.c";
         if ($opt) {
             $opt = path($opt)->absolute;
@@ -68,22 +65,48 @@ package Test2::Tools::Affix 0.09 {
             $c->release;
             return ();
         }
-        my $compiler = Affix::Compiler->new( name => 'testing', version => '1.0', source => [ $opt->canonpath ], flags => { cflags => '-I' . $Inc } );
-        $compiler->compile;
-        push @cleanup, $opt->canonpath, $compiler->link unless $keep;
-        $c->ok( 1, 'build lib: ' . $compiler->link );
+        my $lib_file;
+        try {
+            # Updated to use the new Affix::Compiler API
+            my $compiler = Affix::Compiler->new(
+                name         => 'testing',
+                version      => '1.0',
+                source       => [ $opt->stringify ],    # Ensure we pass string path
+                include_dirs => [ $Inc->stringify ],    # Pass the include dir here
+                cleanup      => !$keep,                 # Map keep to cleanup
+                debug        => 0
+            );
+            $compiler->compile;
+            $lib_file = $compiler->link;
+
+            # Note: The compiler's temp dir handles cleanup automatically if cleanup=>1
+            # If we keep it, we don't push to @cleanup here because Affix::Compiler owns the build_dir.
+        }
+        catch ($e) {
+            $c->fail("Compilation failed: $e");
+            $c->release;
+            return ();
+        }
+        $c->ok( 1, 'build lib: ' . $lib_file );
         $c->release;
-        $compiler->link;
+        return $lib_file;
     }
 
-    sub affix_ok ( $lib, $name, $signature ) {
+    sub affix_ok ( $lib, $name, $args, $ret ) {
         my $c = context;
         my $sub;
         my $okay = run_subtest(
             'affix ' . $name . '( ' . ' )',
             sub {
                 ok lives {
-                    $sub = affix( $lib, $name, $signature )
+                    diag $lib;
+                    diag $name;
+                    diag $args;
+                    diag $ret;
+
+                    package main {
+                        $sub = affix( $lib, $name, $args, $ret );
+                    }
                 }, 'affix ' . $name . ' ...';
                 isa_ok $sub, ['Affix'], $name;
             },
@@ -133,10 +156,9 @@ package Test2::Tools::Affix 0.09 {
                     qw[valgrind --leak-check=full --show-reachable=yes --error-limit=no
                         --gen-suppressions=all --log-fd=1], $^X, '-e',
                     sprintf <<'', ( join ', ', map {"'$_'"} sort { length $a <=> length $b } map { path($_)->absolute->canonpath } @INC ) );
-    use strict;
-    use warnings;
+    use v5.40;
     use lib %s;
-    use Affix;
+    use Affix qw[:all];
     no Test2::Plugin::ExitSummary;
     use Test2::V0;
     pass "generate valgrind suppressions";

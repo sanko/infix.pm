@@ -97,134 +97,106 @@ package LibUI v1.0.0 {
     }
 
     # Type Definitions
-    typedef <<'END_TYPEDEFS';
     # Part 1: Opaque Handle Aliases
-    @uiControl = *void;  # Define a single, canonical opaque pointer for all widget handles
-    @HeapString = *char; # New type for strings that must be freed by the caller
+    typedef uiControl  => Pointer [Void];    # Canonical opaque pointer
+    typedef HeapString => String;            # *char
 
-    # Alias all other widget types to the base uiControl type for consistency.
-    @uiWindow = @uiControl;
-    @uiButton = @uiControl;
-    @uiBox = @uiControl;
-    @uiCheckbox = @uiControl;
-    @uiEntry = @uiControl;
-    @uiLabel = @uiControl;
-    @uiTab = @uiControl;
-    @uiGroup = @uiControl;
-    @uiSpinbox = @uiControl;
-    @uiSlider = @uiControl;
-    @uiProgressBar = @uiControl;
-    @uiSeparator = @uiControl;
-    @uiCombobox = @uiControl;
-    @uiEditableCombobox = @uiControl;
-    @uiRadioButtons = @uiControl;
-    @uiDateTimePicker = @uiControl;
-    @uiMultilineEntry = @uiControl;
-    @uiMenuItem = @uiControl;
-    @uiMenu = @uiControl;
-    @uiForm = @uiControl;
-    @uiGrid = @uiControl;
-    @uiImage = @uiControl;
-    @uiDrawPath = @uiControl;
-    @uiDrawContext = @uiControl;
-    @uiArea = @uiControl;
-    @uiFontButton = @uiControl;
-    @uiColorButton = @uiControl;
-    @uiTable = @uiControl;
-    @uiTableModel = *void;
-    @uiTableValue = *void;
+    # Alias all other widget types to the base uiControl type.
+    # Since uiControl() returns an Affix::Type object, we can pass it directly.
+    typedef $_ => uiControl() for qw[
+        uiWindow uiButton uiBox uiCheckbox uiEntry uiLabel uiTab uiGroup
+        uiSpinbox uiSlider uiProgressBar uiSeparator uiCombobox uiEditableCombobox
+        uiRadioButtons uiDateTimePicker uiMultilineEntry uiMenuItem uiMenu uiForm
+        uiGrid uiImage uiDrawPath uiDrawContext uiArea uiFontButton uiColorButton
+        uiTable
+    ];
 
-    # Part 2: Forward Declarations for Defined Structs
-    @uiAreaHandler;
-    @uiDrawMatrix;
-    @uiDrawBrush;
-    @uiDrawStrokeParams;
-    @uiAreaKeyEvent;
-    @uiAreaMouseEvent;
-    @uiAreaDrawParams;
-    @uiDrawBrushGradientStop;
-    @uiTableModelHandler;
-    @uiTableParams;
+    # These were distinct *void types in the original
+    typedef uiTableModel => Pointer [Void];
+    typedef uiTableValue => Pointer [Void];
+
+    # Part 2: Forward Declarations
+    # We declare these first so they can be referenced recursively or mutually
+    typedef 'uiAreaHandler';
+    typedef 'uiDrawMatrix';
+    typedef 'uiDrawBrush';
+    typedef 'uiDrawStrokeParams';
+    typedef 'uiAreaKeyEvent';
+    typedef 'uiAreaMouseEvent';
+    typedef 'uiAreaDrawParams';
+    typedef 'uiDrawBrushGradientStop';
+    typedef 'uiTableModelHandler';
+    typedef 'uiTableParams';
 
     # Part 3: Full Struct Definitions
-    @uiInitOptions = { Size: size_t };
+    typedef uiInitOptions => Struct [ Size => Size_t ];
 
     # New type for passing raw SV* pointers through C
-    @SV = *void;
-
-    @uiDrawMatrix = {
-        M11: double, M12: double,
-        M21: double, M22: double,
-        M31: double, M32: double
-    };
-
-    @uiDrawBrushGradientStop = { Pos: double, R: double, G: double, B: double, A: double };
-
-    @uiDrawBrush = {
-        Type: int,
-        R: double, G: double, B: double, A: double,
-        X0: double, Y0: double, X1: double, Y1: double,
-        OuterRadius: double,
-        Stops: *@uiDrawBrushGradientStop,
-        NumStops: size_t
-    };
-
-    @uiDrawStrokeParams = {
-        Cap: int,
-        Join: int,
-        MiterLimit: double,
-        Dashes: *double,
-        NumDashes: size_t,
-        DashPhase: double,
-        Thickness: double
-    };
-
-    @uiAreaKeyEvent = {
-        Key: char,
-        ExtKey: int,
-        Modifier: int,
-        Modifiers: int,
-        Up: int
-    };
-
-    @uiAreaMouseEvent = {
-        X: double, Y: double,
-        AreaWidth: double, AreaHeight: double,
-        Down: int, Up: int,
-        Count: int,
-        Modifiers: int,
-        Held1To64: uint64
-    };
-
-    @uiAreaDrawParams = {
-        Context: @uiDrawContext,
-        AreaWidth: double,
-        AreaHeight: double,
-        ClipX: double,
-        ClipY: double,
-        ClipWidth: double,
-        ClipHeight: double
-    };
-
-    @uiAreaHandler = {
-        Draw:           *((*@uiAreaHandler, @uiArea, *@uiAreaDrawParams)->void),
-        MouseEvent:     *((*@uiAreaHandler, @uiArea, *@uiAreaMouseEvent)->void),
-        MouseCrossed:   *((*@uiAreaHandler, @uiArea, int)->void),
-        DragBroken:     *((*@uiAreaHandler, @uiArea)->void),
-        KeyEvent:       *((*@uiAreaHandler, @uiArea, *@uiAreaKeyEvent)->int)
-    };
-
+    typedef SV                      => Pointer [Void];
+    typedef uiDrawMatrix            => Struct [ M11 => Double, M12 => Double, M21 => Double, M22 => Double, M31 => Double, M32 => Double ];
+    typedef uiDrawBrushGradientStop => Struct [ Pos => Double, R   => Double, G   => Double, B   => Double, A   => Double ];
+    typedef uiDrawBrush => Struct [
+        Type        => Int,
+        R           => Double,
+        G           => Double,
+        B           => Double,
+        A           => Double,
+        X0          => Double,
+        Y0          => Double,
+        X1          => Double,
+        Y1          => Double,
+        OuterRadius => Double,
+        Stops       => Pointer [ uiDrawBrushGradientStop() ],
+        NumStops    => Size_t
+    ];
+    typedef uiDrawStrokeParams => Struct [
+        Cap        => Int,
+        Join       => Int,
+        MiterLimit => Double,
+        Dashes     => Pointer [Double],
+        NumDashes  => Size_t,
+        DashPhase  => Double,
+        Thickness  => Double
+    ];
+    typedef uiAreaKeyEvent => Struct [ Key => Char, ExtKey => Int, Modifier => Int, Modifiers => Int, Up => Int ];
+    typedef uiAreaMouseEvent => Struct [
+        X          => Double,
+        Y          => Double,
+        AreaWidth  => Double,
+        AreaHeight => Double,
+        Down       => Int,
+        Up         => Int,
+        Count      => Int,
+        Modifiers  => Int,
+        Held1To64  => UInt64
+    ];
+    typedef uiAreaDrawParams => Struct [
+        Context    => uiDrawContext(),
+        AreaWidth  => Double,
+        AreaHeight => Double,
+        ClipX      => Double,
+        ClipY      => Double,
+        ClipWidth  => Double,
+        ClipHeight => Double
+    ];
+    typedef uiAreaHandler => Struct [
+        Draw         => Callback [ [ Pointer [ uiAreaHandler() ], uiArea(), Pointer [ uiAreaDrawParams() ] ] => Void ],
+        MouseEvent   => Callback [ [ Pointer [ uiAreaHandler() ], uiArea(), Pointer [ uiAreaMouseEvent() ] ] => Void ],
+        MouseCrossed => Callback [ [ Pointer [ uiAreaHandler() ], uiArea(), Int ]                            => Void ],
+        DragBroken   => Callback [ [ Pointer [ uiAreaHandler() ], uiArea() ]                                 => Void ],
+        KeyEvent     => Callback [ [ Pointer [ uiAreaHandler() ], uiArea(), Pointer [ uiAreaKeyEvent() ] ]   => Int ]
+    ];
 
     # Table structs needed for the table example
-    @uiTableModelHandler = {
-        NumColumns:   *((*@uiTableModelHandler, @uiTableModel)->int),
-        ColumnType:   *((*@uiTableModelHandler, @uiTableModel, int)->int),
-        NumRows:      *((*@uiTableModelHandler, @uiTableModel)->int),
-        CellValue:    *((*@uiTableModelHandler, @uiTableModel, int, int)->@uiTableValue),
-        SetCellValue: *((*@uiTableModelHandler, @uiTableModel, int, int, *@uiTableValue)->void)
-    };
-    @uiTableParams = { Model: @uiTableModel, RowBackgroundColorModelColumn: int };
-END_TYPEDEFS
+    typedef uiTableModelHandler => Struct [
+        NumColumns   => Callback [ [ Pointer [ uiTableModelHandler() ], uiTableModel() ]                                       => Int ],
+        ColumnType   => Callback [ [ Pointer [ uiTableModelHandler() ], uiTableModel(), Int ]                                  => Int ],
+        NumRows      => Callback [ [ Pointer [ uiTableModelHandler() ], uiTableModel() ]                                       => Int ],
+        CellValue    => Callback [ [ Pointer [ uiTableModelHandler() ], uiTableModel(), Int, Int ]                             => uiTableValue() ],
+        SetCellValue => Callback [ [ Pointer [ uiTableModelHandler() ], uiTableModel(), Int, Int, Pointer [ uiTableValue() ] ] => Void ]
+    ];
+    typedef uiTableParams => Struct [ Model => uiTableModel(), RowBackgroundColorModelColumn => Int ];
+    #
     for my ( $name, $sig )(
 
         # Main entry points
@@ -510,6 +482,136 @@ END_TYPEDEFS
 }
 #
 1;
+__END__
+
+typedef <<'END_TYPEDEFS';
+    # Part 1: Opaque Handle Aliases
+    @uiControl = *void;  # Define a single, canonical opaque pointer for all widget handles
+    @HeapString = *char; # New type for strings that must be freed by the caller
+
+    # Alias all other widget types to the base uiControl type for consistency.
+    @uiWindow = @uiControl;
+    @uiButton = @uiControl;
+    @uiBox = @uiControl;
+    @uiCheckbox = @uiControl;
+    @uiEntry = @uiControl;
+    @uiLabel = @uiControl;
+    @uiTab = @uiControl;
+    @uiGroup = @uiControl;
+    @uiSpinbox = @uiControl;
+    @uiSlider = @uiControl;
+    @uiProgressBar = @uiControl;
+    @uiSeparator = @uiControl;
+    @uiCombobox = @uiControl;
+    @uiEditableCombobox = @uiControl;
+    @uiRadioButtons = @uiControl;
+    @uiDateTimePicker = @uiControl;
+    @uiMultilineEntry = @uiControl;
+    @uiMenuItem = @uiControl;
+    @uiMenu = @uiControl;
+    @uiForm = @uiControl;
+    @uiGrid = @uiControl;
+    @uiImage = @uiControl;
+    @uiDrawPath = @uiControl;
+    @uiDrawContext = @uiControl;
+    @uiArea = @uiControl;
+    @uiFontButton = @uiControl;
+    @uiColorButton = @uiControl;
+    @uiTable = @uiControl;
+    @uiTableModel = *void;
+    @uiTableValue = *void;
+
+    # Part 2: Forward Declarations for Defined Structs
+    @uiAreaHandler;
+    @uiDrawMatrix;
+    @uiDrawBrush;
+    @uiDrawStrokeParams;
+    @uiAreaKeyEvent;
+    @uiAreaMouseEvent;
+    @uiAreaDrawParams;
+    @uiDrawBrushGradientStop;
+    @uiTableModelHandler;
+    @uiTableParams;
+
+    # Part 3: Full Struct Definitions
+    @uiInitOptions = { Size: size_t };
+
+    # New type for passing raw SV* pointers through C
+    @SV = *void;
+
+    @uiDrawMatrix = {
+        M11: double, M12: double,
+        M21: double, M22: double,
+        M31: double, M32: double
+    };
+
+    @uiDrawBrushGradientStop = { Pos: double, R: double, G: double, B: double, A: double };
+
+    @uiDrawBrush = {
+        Type: int,
+        R: double, G: double, B: double, A: double,
+        X0: double, Y0: double, X1: double, Y1: double,
+        OuterRadius: double,
+        Stops: *@uiDrawBrushGradientStop,
+        NumStops: size_t
+    };
+
+    @uiDrawStrokeParams = {
+        Cap: int,
+        Join: int,
+        MiterLimit: double,
+        Dashes: *double,
+        NumDashes: size_t,
+        DashPhase: double,
+        Thickness: double
+    };
+
+    @uiAreaKeyEvent = {
+        Key: char,
+        ExtKey: int,
+        Modifier: int,
+        Modifiers: int,
+        Up: int
+    };
+
+    @uiAreaMouseEvent = {
+        X: double, Y: double,
+        AreaWidth: double, AreaHeight: double,
+        Down: int, Up: int,
+        Count: int,
+        Modifiers: int,
+        Held1To64: uint64
+    };
+
+    @uiAreaDrawParams = {
+        Context: @uiDrawContext,
+        AreaWidth: double,
+        AreaHeight: double,
+        ClipX: double,
+        ClipY: double,
+        ClipWidth: double,
+        ClipHeight: double
+    };
+
+    @uiAreaHandler = {
+        Draw:           *((*@uiAreaHandler, @uiArea, *@uiAreaDrawParams)->void),
+        MouseEvent:     *((*@uiAreaHandler, @uiArea, *@uiAreaMouseEvent)->void),
+        MouseCrossed:   *((*@uiAreaHandler, @uiArea, int)->void),
+        DragBroken:     *((*@uiAreaHandler, @uiArea)->void),
+        KeyEvent:       *((*@uiAreaHandler, @uiArea, *@uiAreaKeyEvent)->int)
+    };
+
+
+    # Table structs needed for the table example
+    @uiTableModelHandler = {
+        NumColumns:   *((*@uiTableModelHandler, @uiTableModel)->int),
+        ColumnType:   *((*@uiTableModelHandler, @uiTableModel, int)->int),
+        NumRows:      *((*@uiTableModelHandler, @uiTableModel)->int),
+        CellValue:    *((*@uiTableModelHandler, @uiTableModel, int, int)->@uiTableValue),
+        SetCellValue: *((*@uiTableModelHandler, @uiTableModel, int, int, *@uiTableValue)->void)
+    };
+    @uiTableParams = { Model: @uiTableModel, RowBackgroundColorModelColumn: int };
+END_TYPEDEFS
 
 =head1 NAME
 

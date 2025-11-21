@@ -19,29 +19,5 @@ package Affix::Type::Struct 0.5 {
         #~ }
         1;
     }
-
-    sub Struct : prototype($) {
-        my (@types) = @{ +shift };
-        warnings::warnif( 'Affix::Type', 'Odd number of elements in struct fields' ) if @types % 2;
-        my @fields;
-        my $sizeof = 0;
-        my $packed = 0;
-        my @store_;
-
-        #for my ( $field, $subtype ) (@types) { # requires perl 5.36
-        for ( my $i = 0; $i < $#types; $i += 2 ) {
-            my $field   = $types[$i];
-            my $subtype = $types[ $i + 1 ];
-
-            #~ warn sprintf '%10s => %d', $field, $subtype->{offset};
-            $subtype->{name} = $field;    # field name
-            push @store_, bless { %{$subtype} }, ref $subtype;
-            push @fields, sprintf '%s: %s', $field, $subtype;
-
-            #~ warn sprintf 'After:  struct size: %d, element size: %d', $sizeof, $__sizeof;
-        }
-        my $s = Affix::Type::Struct->new( sprintf( '{ %s }', join( ', ', @fields ) ) );
-        return $s;
-    }
 };
 1;

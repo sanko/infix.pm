@@ -5,7 +5,8 @@ use lib '../lib', 'lib';
 use blib;
 use lib $Bin;
 use LibUI qw[:all];
-use Affix qw[cast];    # Import the new, explicit cast function
+use Affix qw[:all];    # Import the new, explicit cast function
+
 
 # Shared data for our histogram
 my @data_points = ( 10, 80, 55, 30, 95, 25, 60 );

@@ -21,7 +21,7 @@ class    #
     # infix and Affix stuff
     use Config qw[%Config];
     field $force : param //= 0;
-    field $debug : param = 0;
+    field $debug : param = 1;
     field $libver;
     field $cflags
         = $^O =~ /bsd/ ? '' :
@@ -172,7 +172,11 @@ use %s;
         my $build_dir = $cwd->child('infix')->absolute;
 
         #~ chdir $build_dir;
-        system $^X, 'infix/build.pl', '--compiler', ( $Config{cc} eq 'cc' ? 'gcc' : $Config{cc} ), '--cflags', '-fPIC';
+        #C:\Users\S\Documents\GitHub\infix\build.pl
+        system $^X, 'infix/build.pl', grep {defined}
+
+            #( $verbose ? '--v' : () ),
+            '--compiler', ( $Config{cc} eq 'cc' ? 'gcc' : $Config{cc} ), '--cflags', '-fPIC';
 
         #, '--cflags', $cflags;
         #~ warn `$^X infix/build.pl --cflags="$cflags"`;
