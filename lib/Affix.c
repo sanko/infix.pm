@@ -387,7 +387,58 @@ static void pull_uint128(pTHX_ Affix *, SV *, const infix_type *, void *);
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //              FUNCTION DEFINITIONS (BEFORE STATIC DATA)
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
+// In Affix.c - Helper to map type to opcode
+static Affix_Opcode get_opcode_for_type(const infix_type * type) {
+    switch (type->category) {
+    case INFIX_TYPE_PRIMITIVE:
+        switch (type->meta.primitive_id) {
+        case INFIX_PRIMITIVE_BOOL:
+            return OP_PUSH_BOOL;
+        case INFIX_PRIMITIVE_SINT8:
+            return OP_PUSH_SINT8;
+        case INFIX_PRIMITIVE_UINT8:
+            return OP_PUSH_UINT8;
+        case INFIX_PRIMITIVE_SINT16:
+            return OP_PUSH_SINT16;
+        case INFIX_PRIMITIVE_UINT16:
+            return OP_PUSH_UINT16;
+        case INFIX_PRIMITIVE_SINT32:
+            return OP_PUSH_SINT32;
+        case INFIX_PRIMITIVE_UINT32:
+            return OP_PUSH_UINT32;
+        case INFIX_PRIMITIVE_SINT64:
+            return OP_PUSH_SINT64;
+        case INFIX_PRIMITIVE_UINT64:
+            return OP_PUSH_UINT64;
+        case INFIX_PRIMITIVE_FLOAT:
+            return OP_PUSH_FLOAT;
+        case INFIX_PRIMITIVE_DOUBLE:
+            return OP_PUSH_DOUBLE;
+        default:
+            return OP_PUSH_DOUBLE;  // Fallback/LongDouble
+        }
+    case INFIX_TYPE_POINTER:
+        {
+            const char * name = infix_type_get_name(type);
+            if (name && strnEQ(name, "SV", 2))
+                return OP_PUSH_SV;
+            return OP_PUSH_POINTER;
+        }
+    case INFIX_TYPE_STRUCT:
+        return OP_PUSH_STRUCT;
+    case INFIX_TYPE_UNION:
+        return OP_PUSH_UNION;
+    case INFIX_TYPE_ARRAY:
+        return OP_PUSH_ARRAY;
+    case INFIX_TYPE_ENUM:
+        return OP_PUSH_ENUM;
+    case INFIX_TYPE_REVERSE_TRAMPOLINE:
+        return OP_PUSH_CALLBACK;
+    // ... others
+    default:
+        return OP_PUSH_STRUCT;  // Fallback
+    }
+}
 // --- Define sv2ptr primitive handlers ---
 DEFINE_PUSH_HANDLER(sint8, int8_t, SvIOK, SvIV)
 DEFINE_PUSH_HANDLER(uint8, uint8_t, SvUOK, SvUV)
@@ -867,7 +918,7 @@ Affix_Out_Param_Writer get_out_param_writer(const infix_type * pointee_type) {
 //                      MAIN TRIGGER & XS FUNCTIONS
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-void Affix_trigger(pTHX_ CV * cv) {
+void xAffix_trigger(pTHX_ CV * cv) {
     dSP;
     dAXMARK;
     // OPTIMIZATION: Initialize TARG directly. This provides a target SV
@@ -961,6 +1012,226 @@ void Affix_trigger(pTHX_ CV * cv) {
     PL_stack_sp = PL_stack_base + ax;
     return;
 }
+
+// Dispatcher Macros
+#if defined(__GNUC__) || defined(__clang__)
+#define USE_COMPUTED_GOTO 1
+#define DISPATCH_TABLE                                                                                  \
+    static void * dispatch_table[] = {                                                                  \
+        &&CASE_OP_PUSH_BOOL,     &&CASE_OP_PUSH_SINT8,  &&CASE_OP_PUSH_UINT8,   &&CASE_OP_PUSH_SINT16,  \
+        &&CASE_OP_PUSH_UINT16,   &&CASE_OP_PUSH_SINT32, &&CASE_OP_PUSH_UINT32,  &&CASE_OP_PUSH_SINT64,  \
+        &&CASE_OP_PUSH_UINT64,   &&CASE_OP_PUSH_FLOAT,  &&CASE_OP_PUSH_DOUBLE,  &&CASE_OP_PUSH_POINTER, \
+        &&CASE_OP_PUSH_SV,       &&CASE_OP_PUSH_STRUCT, &&CASE_OP_PUSH_UNION,   &&CASE_OP_PUSH_ARRAY,   \
+        &&CASE_OP_PUSH_CALLBACK, &&CASE_OP_PUSH_ENUM,   &&CASE_OP_PUSH_COMPLEX, &&CASE_OP_PUSH_VECTOR};
+#define DISPATCH()                               \
+    do {                                         \
+        step++;                                  \
+        if (step < end)                          \
+            goto * dispatch_table[step->opcode]; \
+        else                                     \
+            goto DONE;                           \
+    } while (0)
+#define TARGET(op) CASE_##op:
+#else
+#define USE_COMPUTED_GOTO 0
+#define DISPATCH_TABLE
+#define DISPATCH() goto DISPATCH_LOOP
+#define TARGET(op) case op:
+#endif
+
+void Affix_trigger(pTHX_ CV * cv) {
+    dSP;
+    dAXMARK;
+    dXSTARG;
+    Affix * affix = (Affix *)CvXSUBANY(cv).any_ptr;
+
+    if (UNLIKELY((SP - MARK) != affix->num_args))
+        croak("Wrong number of arguments. Expected %d, got %d", (int)affix->num_args, (int)(SP - MARK));
+
+    SV ** perl_stack_frame = &ST(0);
+
+    // Stack allocation logic (same as before)
+    void * args_buffer;
+    void ** c_args;
+    void * ret_buffer;
+
+    if (LIKELY(affix->total_args_size < 2048)) {
+        args_buffer = alloca(affix->total_args_size);
+        c_args = (void **)alloca(affix->num_args * sizeof(void *));
+    }
+    else {
+        affix->args_arena->current_offset = 0;
+        args_buffer = affix->args_arena->buffer;
+        affix->args_arena->current_offset += affix->total_args_size;
+        c_args = affix->c_args;
+    }
+
+    if (LIKELY(affix->ret_type->size < 256)) {
+        ret_buffer = alloca(affix->ret_type->size);
+    }
+    else {
+        affix->ret_arena->current_offset = 0;
+        ret_buffer = affix->ret_arena->buffer;
+        affix->ret_arena->current_offset += affix->ret_type->size;
+    }
+
+    // --- THE VM LOOP ---
+    Affix_Plan_Step * step = affix->plan;
+    Affix_Plan_Step * end = step + affix->num_args;
+
+    // Declare table for GCC
+    DISPATCH_TABLE;
+
+    // Initial jump
+    if (step < end) {
+#if USE_COMPUTED_GOTO
+        goto * dispatch_table[step->opcode];
+#else
+DISPATCH_LOOP:
+        switch (step->opcode) {
+#endif
+    }
+    else {
+        goto DONE;
+    }
+
+    // --- INSTRUCTIONS ---
+
+    TARGET(OP_PUSH_SINT32) {
+        SV * sv = perl_stack_frame[step->data.index];
+        void * ptr = (char *)args_buffer + step->data.c_arg_offset;
+        *(int32_t *)ptr = (int32_t)SvIV(sv);
+        c_args[step->data.index] = ptr;
+        DISPATCH();
+    }
+
+    TARGET(OP_PUSH_UINT32) {
+        SV * sv = perl_stack_frame[step->data.index];
+        void * ptr = (char *)args_buffer + step->data.c_arg_offset;
+        *(uint32_t *)ptr = (uint32_t)SvUV(sv);
+        c_args[step->data.index] = ptr;
+        DISPATCH();
+    }
+
+    TARGET(OP_PUSH_SINT64) {
+        SV * sv = perl_stack_frame[step->data.index];
+        void * ptr = (char *)args_buffer + step->data.c_arg_offset;
+        *(int64_t *)ptr = (int64_t)SvIV(sv);
+        c_args[step->data.index] = ptr;
+        DISPATCH();
+    }
+
+    TARGET(OP_PUSH_DOUBLE) {
+        SV * sv = perl_stack_frame[step->data.index];
+        void * ptr = (char *)args_buffer + step->data.c_arg_offset;
+        // Inline the optimized double check logic here for speed
+        U32 flags = SvFLAGS(sv);
+        if (LIKELY(flags & SVf_NOK))
+            *(double *)ptr = SvNVX(sv);
+        else if (flags & SVf_IOK)
+            *(double *)ptr = (double)((flags & SVf_IVisUV) ? SvUVX(sv) : SvIVX(sv));
+        else
+            *(double *)ptr = (double)SvNV(sv);
+
+        c_args[step->data.index] = ptr;
+        DISPATCH();
+    }
+
+    TARGET(OP_PUSH_POINTER) {
+        // Inline the pointer logic, or call a static inline helper
+        SV * sv = perl_stack_frame[step->data.index];
+        void * ptr = (char *)args_buffer + step->data.c_arg_offset;
+        c_args[step->data.index] = ptr;
+
+        if (is_pin(aTHX_ sv)) {
+            *(void **)ptr = _get_pin_from_sv(aTHX_ sv)->pointer;
+        }
+        else if (SvPOK(sv)) {
+            *(void **)ptr = (void *)SvPV_nolen(sv);
+        }
+        else if (!SvOK(sv)) {
+            *(void **)ptr = NULL;
+        }
+        else {
+            // Fallback to complex logic for arrays/structs passed as ptrs
+            // We can keep the old function for complex cases to keep the VM small
+            step->executor(aTHX_ affix, step, perl_stack_frame, args_buffer, c_args, ret_buffer);
+        }
+        DISPATCH();
+    }
+
+    TARGET(OP_PUSH_STRUCT)
+    TARGET(OP_PUSH_UNION)
+    TARGET(OP_PUSH_ARRAY)
+    TARGET(OP_PUSH_CALLBACK)
+    TARGET(OP_PUSH_ENUM)
+    TARGET(OP_PUSH_COMPLEX)
+    TARGET(OP_PUSH_VECTOR)
+    TARGET(OP_PUSH_SV) {
+        // For complex types, falling back to the function pointer is acceptable
+        // as the marshalling overhead dominates the dispatch overhead.
+        step->executor(aTHX_ affix, step, perl_stack_frame, args_buffer, c_args, ret_buffer);
+        DISPATCH();
+    }
+
+    // Primitives not explicitly optimized above can fall through or be added
+    TARGET(OP_PUSH_BOOL)
+    TARGET(OP_PUSH_SINT8)
+    TARGET(OP_PUSH_UINT8)
+    TARGET(OP_PUSH_SINT16)
+    TARGET(OP_PUSH_UINT16)
+    TARGET(OP_PUSH_UINT64)
+    TARGET(OP_PUSH_FLOAT) {
+        step->executor(aTHX_ affix, step, perl_stack_frame, args_buffer, c_args, ret_buffer);
+        DISPATCH();
+    }
+
+#if !USE_COMPUTED_GOTO
+}  // End switch
+#endif
+
+DONE:
+
+    // --- CALL ---
+    affix->cif(ret_buffer, c_args);
+
+// --- RETURN ---
+if (affix->ret_pull_handler)
+    affix->ret_pull_handler(aTHX_ affix, TARG, affix->ret_type, ret_buffer);
+
+// --- WRITEBACK (Out params) ---
+// (Keep existing writeback logic)
+if (affix->num_out_params > 0) {
+    size_t valid_out_indices[affix->num_out_params];
+    size_t num_valid_out_params = 0;
+
+    for (size_t i = 0; i < affix->num_out_params; ++i) {
+        const OutParamInfo * info = &affix->out_param_info[i];
+        SV * arg_sv = perl_stack_frame[info->perl_stack_index];
+
+        if (SvROK(arg_sv) && !is_pin(aTHX_ arg_sv))
+            valid_out_indices[num_valid_out_params++] = i;
+    }
+
+    for (size_t i = 0; i < num_valid_out_params; ++i) {
+        size_t info_idx = valid_out_indices[i];
+        const OutParamInfo * info = &affix->out_param_info[info_idx];
+
+        SV * rsv = SvRV(perl_stack_frame[info->perl_stack_index]);
+
+        if (SvTYPE(rsv) == SVt_PVAV)
+            continue;
+
+        // Use the local c_args pointer, which might be on the stack
+        info->writer(aTHX_ affix, info, rsv, c_args[info->perl_stack_index]);
+    }
+}
+
+ST(0) = TARG;
+PL_stack_sp = PL_stack_base + ax;
+}
+
+
 void xxxAffix_trigger(pTHX_ CV * cv) {
     dSP;
     dAXMARK;
@@ -1078,7 +1349,7 @@ XS_INTERNAL(Affix_affix) {
     // ---------------------------------------------------------
     // 1. Argument Parsing and Symbol Resolution (Shared)
     // ---------------------------------------------------------
-    if (ix == 2) {
+    if (ix == 2 || ix == 4) {
         if (items != 3)
             croak_xs_usage(cv, "Affix::affix_bundle($target, $name, $signature)");
     }
@@ -1097,7 +1368,7 @@ XS_INTERNAL(Affix_affix) {
     const char * rename_str = NULL;
 
     if (SvROK(name_sv) && SvTYPE(SvRV(name_sv)) == SVt_PVAV) {
-        if (ix)
+        if (ix == 1 || ix == 3)
             croak("Cannot rename an anonymous Affix'd wrapper");
         AV * name_av = (AV *)SvRV(name_sv);
         if (av_count(name_av) != 2)
@@ -1201,7 +1472,11 @@ XS_INTERNAL(Affix_affix) {
         for (size_t i = 0; i < backend->num_args; ++i)
             strcat(prototype_buf, "$");
 
-        CV * cv_new = newXSproto_portable(rename_str, Affix_trigger_backend, __FILE__, prototype_buf);
+        //    CV * cv_new = newXSproto_portable(ix == 0 ? rename : NULL, Affix_trigger, __FILE__, prototype_buf);
+        CV * cv_new =
+            newXSproto_portable((ix == 0 || ix == 2) ? rename : NULL, Affix_trigger_backend, __FILE__, prototype_buf);
+        //~ CV * cv_new = newXSproto_portable(rename_str, Affix_trigger_backend, __FILE__, prototype_buf);
+
         CvXSUBANY(cv_new).any_ptr = (void *)backend;
 
         SV * obj = newRV_inc(MUTABLE_SV(cv_new));
@@ -1325,6 +1600,7 @@ XS_INTERNAL(Affix_affix) {
     for (size_t i = 0; i < affix->num_args; ++i) {
         const infix_type * type = infix_forward_get_arg_type(affix->infix, i);
         affix->plan[i].executor = get_plan_step_executor(type);
+        affix->plan[i].opcode = get_opcode_for_type(type);
 
         if (affix->plan[i].executor == NULL) {
             safefree(temp_out_info);
@@ -1385,7 +1661,7 @@ XS_INTERNAL(ssssAffix_affix) {
 
 
     // Multiplex to the new backend logic if `affix_bundle` was called.
-    if (ix == 2) {
+    if (ix == 2 || ix == 3) {
         if (items != 3)
             croak_xs_usage(cv, "Affix::affix_bundle($target, $name, $signature)");
 
@@ -1492,7 +1768,7 @@ XS_INTERNAL(ssssAffix_affix) {
         for (size_t i = 0; i < backend->num_args; ++i)
             strcat(prototype_buf, "$");
 
-        CV * cv_new = newXSproto_portable(rename_str, Affix_trigger_backend, __FILE__, prototype_buf);
+        CV * cv_new = newXSproto_portable(ix == 2 ? rename_str : NULL, Affix_trigger_backend, __FILE__, prototype_buf);
         CvXSUBANY(cv_new).any_ptr = (void *)backend;
 
         SV * obj = newRV_inc(MUTABLE_SV(cv_new));
@@ -1656,6 +1932,7 @@ XS_INTERNAL(ssssAffix_affix) {
     for (size_t i = 0; i < affix->num_args; ++i) {
         const infix_type * type = infix_forward_get_arg_type(affix->infix, i);
         affix->plan[i].executor = get_plan_step_executor(type);
+        affix->plan[i].opcode = get_opcode_for_type(type);
         if (affix->plan[i].executor == NULL) {
             safefree(temp_out_info);
             infix_forward_destroy(affix->infix);
@@ -2248,8 +2525,6 @@ void push_reverse_trampoline(pTHX_ Affix * affix, const infix_type * type, SV * 
             }
             infix_reverse_t * reverse_ctx = NULL;
 
-            warn("num_args: %i, num_fixed_args: %i", num_args, num_fixed_args);
-
             infix_status status = infix_reverse_create_closure_manual(&reverse_ctx,
                                                                       ret_type,
                                                                       arg_types,
@@ -2632,7 +2907,6 @@ void _affix_callback_handler_entry(infix_context_t * ctx, void * retval, void **
     PUSHMARK(SP);
     size_t num_args = infix_reverse_get_num_args(ctx);
 
-    warn("num_args: %i", num_args);
     for (size_t i = 0; i < num_args; ++i) {
         const infix_type * type = infix_reverse_get_arg_type(ctx, i);
         Affix_Pull puller = get_pull_handler(type);
@@ -3085,19 +3359,24 @@ void boot_Affix(pTHX_ CV * cv) {
     MY_CXT.registry = infix_registry_create();
     if (!MY_CXT.registry)
         croak("Failed to initialize the global type registry");
-    cv = newXSproto_portable("Affix::affix", Affix_affix, __FILE__, "$$$;$");
-    XSANY.any_i32 = 0;
-    export_function("Affix", "affix", "base");
-    cv = newXSproto_portable("Affix::wrap", Affix_affix, __FILE__, "$$$;$");
-    XSANY.any_i32 = 1;
-    export_function("Affix", "wrap", "base");
-    newXS("Affix::DESTROY", Affix_DESTROY, __FILE__);
-
-    cv = newXSproto_portable("Affix::affix_bundle", Affix_affix, __FILE__, "$$$;$");
-    XSANY.any_i32 = 2;
-    export_function("Affix", "affix_bundle", "base");
-    newXS("Affix::Bundled::DESTROY", Affix_Bundled_DESTROY, __FILE__);
-
+    {
+        cv = newXSproto_portable("Affix::affix", Affix_affix, __FILE__, "$$$;$");
+        XSANY.any_i32 = 0;
+        export_function("Affix", "affix", "base");
+        cv = newXSproto_portable("Affix::wrap", Affix_affix, __FILE__, "$$$;$");
+        XSANY.any_i32 = 1;
+        export_function("Affix", "wrap", "base");
+        newXS("Affix::DESTROY", Affix_DESTROY, __FILE__);
+    }
+    {
+        cv = newXSproto_portable("Affix::direct_affix", Affix_affix, __FILE__, "$$$;$");
+        XSANY.any_i32 = 2;
+        export_function("Affix", "direct_affix", "base");
+        cv = newXSproto_portable("Affix::direct_wrap", Affix_affix, __FILE__, "$$$;$");
+        XSANY.any_i32 = 3;
+        export_function("Affix", "direct_wrap", "base");
+        newXS("Affix::Bundled::DESTROY", Affix_Bundled_DESTROY, __FILE__);
+    }
 
     newXS("Affix::END", Affix_END, __FILE__);
     sv_setsv(get_sv("Affix::()", TRUE), &PL_sv_yes);

@@ -21,7 +21,7 @@ class    #
     # infix and Affix stuff
     use Config qw[%Config];
     field $force : param //= 0;
-    field $debug : param = 1;
+    field $debug : param = 0;
     field $libver;
     field $cflags
         = $^O =~ /bsd/ ? '' :

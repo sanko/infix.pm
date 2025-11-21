@@ -95,9 +95,39 @@ typedef struct {
     Affix_Pull pull_handler;  // Pre-resolved pull handler for the return step.
     size_t c_arg_offset;      // Pre-calculated offset into the C arguments buffer.
 } Affix_Step_Data;
+
+
+typedef enum {
+    OP_PUSH_BOOL,
+    OP_PUSH_SINT8,
+    OP_PUSH_UINT8,
+    OP_PUSH_SINT16,
+    OP_PUSH_UINT16,
+    OP_PUSH_SINT32,
+    OP_PUSH_UINT32,
+    OP_PUSH_SINT64,
+    OP_PUSH_UINT64,
+    OP_PUSH_FLOAT,
+    OP_PUSH_DOUBLE,
+    OP_PUSH_POINTER,
+    OP_PUSH_SV,
+    OP_PUSH_STRUCT,
+    OP_PUSH_UNION,
+    OP_PUSH_ARRAY,
+    OP_PUSH_CALLBACK,
+    OP_PUSH_ENUM,
+    OP_PUSH_COMPLEX,
+    OP_PUSH_VECTOR,
+    OP_CALL,      // Markers for end of args
+    OP_RET_VOID,  // Handlers for return values
+    OP_RET_INT,   // Generic int return (placeholder)
+    // ... add specific return ops if optimizing return path too ...
+} Affix_Opcode;
+
 /// @brief A single step in the pre-compiled execution plan.
 struct Affix_Plan_Step {
     Affix_Step_Executor executor;  // Function pointer to the executor for this step.
+    Affix_Opcode opcode;           // The instruction for the VM
     Affix_Step_Data data;          // Pre-calculated data needed by the executor.
 };
 /// @brief Represents a forward FFI call (a Perl sub that calls a C function).

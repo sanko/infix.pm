@@ -7,7 +7,6 @@ use lib $Bin;
 use LibUI qw[:all];
 use Affix qw[:all];    # Import the new, explicit cast function
 
-
 # Shared data for our histogram
 my @data_points = ( 10, 80, 55, 30, 95, 25, 60 );
 my $selected_point_color;    # This will be a brush struct
