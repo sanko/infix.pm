@@ -1,6 +1,6 @@
 #pragma once
 
-#define DEBUG 10
+#define DEBUG 0
 
 // Disables the implicit 'pTHX_' context pointer argument, which is good practice for
 // modern Perl XS code that uses the 'aTHX_' macro explicitly.

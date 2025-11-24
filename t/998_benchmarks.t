@@ -9,17 +9,29 @@ use Config;
 use Benchmark qw[:all];
 $|++;
 
-# Conditionally load FFI::Platypus
-my $has_platypus;
+# Conditionally load FFI::Platypus and Inline::C
+my ( $has_platypus, $has_inline_c );
 
 BEGIN {
-    eval 'use FFI::Platypus';
-    unless ($@) {
-        $has_platypus = 1;
-        diag 'FFI::Platypus found, including it in benchmarks.';
+    {
+        eval 'use FFI::Platypus';
+        unless ($@) {
+            $has_platypus = 1;
+            diag 'FFI::Platypus found, including it in benchmarks.';
+        }
+        else {
+            diag 'FFI::Platypus not found, skipping its benchmarks.';
+        }
     }
-    else {
-        diag 'FFI::Platypus not found, skipping its benchmarks.';
+    {
+        eval 'use Inline;';
+        unless ($@) {
+            $has_inline_c = 1;
+            diag 'Inline::C found, including it in benchmarks.';
+        }
+        else {
+            diag 'Inline::C not found, skipping its benchmarks.';
+        }
     }
 }
 my $libm = '' . libm();
@@ -41,6 +53,13 @@ if ($has_platypus) {
     $ffi->attach( [ sin => 'platypus_sin' ], ['double'] => 'double' );
     $platypus_sin = $ffi->function( 'sin', ['double'] => 'double' );
 }
+my $inline_c_sin;
+if ($has_inline_c) {
+    use Inline C => <<END_OF_C;
+#include <math.h>
+double inline_sin(double x) { return sin(x); }
+END_OF_C
+}
 
 # Verification
 my $num = rand(time);
@@ -57,6 +76,9 @@ subtest verify => sub {
     if ($has_platypus) {
         is $platypus_sin->($num), float( $sin, tolerance => 0.000001 ), 'platypus [function] correctly calculates sin';
         is platypus_sin($num),    float( $sin, tolerance => 0.000001 ), 'platypus [attach] correctly calculates sin';
+    }
+    if ($has_inline_c) {
+        is inline_sin($num), float( $sin, tolerance => 0.000001 ), 'inline correctly calculates sin';
     }
 };
 
@@ -99,6 +121,17 @@ subtest benchmarks => sub {
                 }
                 ) :
                 ()
+        ), (
+            $has_inline_c ?
+
+                # Conditionally add Inline::C benchmark
+                (
+                inline_c => sub {
+                    my $x = 0;
+                    while ( $x < $depth ) { my $n = inline_sin($x); $x++ }
+                }
+                ) :
+                ()
         )
     );
     isnt fastest( -10, %benchmarks ), 'pure', 'The fastest method should not be pure Perl';
@@ -126,38 +159,42 @@ sub fastest {
 }
 done_testing;
 
+# Current results:
 # WSL:
-# running direct_wrap, direct_affix, plat_f, plat_a, pure, affix, wrap for 10 seconds each
-# affix -  9 wallclock secs (10.58 usr +  0.00 sys = 10.58 CPU) @ 751291.68/s (n=7948666)
-# direct_affix - 10 wallclock secs (10.53 usr +  0.00 sys = 10.53 CPU) @ 768814.72/s (n=8095619)
-# direct_wrap - 10 wallclock secs (10.47 usr +  0.00 sys = 10.47 CPU) @ 737285.29/s (n=7719377)
-# plat_a -  9 wallclock secs (10.40 usr +  0.00 sys = 10.40 CPU) @ 463780.48/s (n=4823317)
-# plat_f - 10 wallclock secs (10.43 usr +  0.00 sys = 10.43 CPU) @ 101160.31/s (n=1055102)
-#  pure -  8 wallclock secs (10.39 usr +  0.00 sys = 10.39 CPU) @ 1018920.02/s (n=10586579)
-#  wrap - 11 wallclock secs (10.57 usr +  0.00 sys = 10.57 CPU) @ 737400.47/s (n=7794323)
-#             Rate plat_f plat_a direct_wrap  wrap affix direct_affix  pure
-# plat_f         101160/s    --  -78%  -86%  -86%  -87%  -87%  -90%
-# plat_a         463780/s  358%    --  -37%  -37%  -38%  -40%  -54%
-# direct_wrap    737285/s  629%   59%    --   -0%   -2%   -4%  -28%
-# wrap           737400/s  629%   59%    0%    --   -2%   -4%  -28%
-# affix          751292/s  643%   62%    2%    2%    --   -2%  -26%
-# direct_affix   768815/s  660%   66%    4%    4%    2%    --  -25%
-# pure          1018920/s  907%  120%   38%   38%   36%   33%    --
-#
+# running inline_c, pure, affix, direct_affix, wrap, plat_f, plat_a, direct_wrap for 10 seconds each
+#        affix - 12 wallclock secs (10.61 usr +  0.00 sys = 10.61 CPU) @ 749167.39/s (n=7948666)
+# direct_affix -  9 wallclock secs (10.51 usr +  0.00 sys = 10.51 CPU) @ 785234.63/s (n=8252816)
+#  direct_wrap - 11 wallclock secs (10.49 usr +  0.00 sys = 10.49 CPU) @ 743024.12/s (n=7794323)
+#     inline_c -  8 wallclock secs (10.41 usr +  0.00 sys = 10.41 CPU) @ 785154.85/s (n=8173462)
+#       plat_a - 12 wallclock secs (10.56 usr +  0.00 sys = 10.56 CPU) @ 452524.24/s (n=4778656)
+#       plat_f - 11 wallclock secs (10.46 usr +  0.00 sys = 10.46 CPU) @ 99935.28/s (n=1045323)
+#         pure - 12 wallclock secs (10.67 usr +  0.00 sys = 10.67 CPU) @ 992181.82/s (n=10586580)
+#         wrap - 12 wallclock secs (10.52 usr +  0.00 sys = 10.52 CPU) @ 657243.54/s (n=6914202)
+#                   Rate plat_f plat_a  wrap direct_wrap affix inline_c direct_affix  pure
+# plat_f         99935/s    --  -78%  -85%  -87%  -87%  -87%  -87%  -90%
+# plat_a        452524/s  353%    --  -31%  -39%  -40%  -42%  -42%  -54%
+# wrap          657244/s  558%   45%    --  -12%  -12%  -16%  -16%  -34%
+# direct_wrap   743024/s  644%   64%   13%    --   -1%   -5%   -5%  -25%
+# affix         749167/s  650%   66%   14%    1%    --   -5%   -5%  -24%
+# inline_c      785155/s  686%   74%   19%    6%    5%    --   -0%  -21%
+# direct_affix  785235/s  686%   74%   19%    6%    5%    0%    --  -21%
+# pure          992182/s  893%  119%   51%   34%   32%   26%   26%    --
 # Windows:
-# running wrap, pure, plat_f, plat_a, direct_affix, direct_wrap, affix for 10 seconds each
-#  affix - 11 wallclock secs (10.53 usr +  0.02 sys = 10.55 CPU) @ 654642.84/s (n=6904518)
-# direct_affix - 10 wallclock secs (10.08 usr +  0.05 sys = 10.12 CPU) @ 697713.26/s (n=7063649)
-# direct_wrap - 10 wallclock secs (10.51 usr +  0.03 sys = 10.55 CPU) @ 644699.89/s (n=6799005)
-# plat_a - 10 wallclock secs (10.42 usr +  0.02 sys = 10.44 CPU) @ 218192.37/s (n=2277492)
-# plat_f - 11 wallclock secs (10.45 usr +  0.00 sys = 10.45 CPU) @ 47983.35/s (n=501522)
-#   pure - 11 wallclock secs (10.45 usr +  0.02 sys = 10.47 CPU) @ 527346.74/s (n=5520793)
-#   wrap - 11 wallclock secs (10.38 usr +  0.03 sys = 10.41 CPU) @ 643539.11/s (n=6696668)
-#             Rate plat_f plat_a  pure  wrap direct_wrap affix direct_affix
-# plat_f         47983/s    --  -78%  -91%  -93%  -93%  -93%  -93%
-# plat_a        218192/s  355%    --  -59%  -66%  -66%  -67%  -69%
-# pure          527347/s  999%  142%    --  -18%  -18%  -19%  -24%
-# wrap          643539/s 1241%  195%   22%    --   -0%   -2%   -8%
-# direct_wrap   644700/s 1244%  195%   22%    0%    --   -2%   -8%
-# affix         654643/s 1264%  200%   24%    2%    2%    --   -6%
-# direct_affix  697713/s 1354%  220%   32%    8%    8%    7%    --
+# running direct_wrap, direct_affix, wrap, affix, plat_f, pure, plat_a, inline_c for 10 seconds each
+#     affix - 10 wallclock secs (10.94 usr +  0.01 sys = 10.95 CPU) @ 623302.41/s (n=6826408)
+# direct_affix - 11 wallclock secs (10.11 usr +  0.00 sys = 10.11 CPU) @ 663069.94/s (n=6702974)
+# direct_wrap - 11 wallclock secs (10.53 usr +  0.02 sys = 10.55 CPU) @ 622782.31/s (n=6568485)
+#  inline_c - 11 wallclock secs (10.66 usr +  0.03 sys = 10.69 CPU) @ 318067.18/s (n=3399502)
+#    plat_a - 11 wallclock secs (10.39 usr +  0.05 sys = 10.44 CPU) @ 200056.81/s (n=2088193)
+#    plat_f - 10 wallclock secs (10.61 usr +  0.00 sys = 10.61 CPU) @ 44803.20/s (n=475362)
+#      pure - 11 wallclock secs (10.41 usr +  0.00 sys = 10.41 CPU) @ 425988.28/s (n=4432834)
+#      wrap - 10 wallclock secs (10.03 usr +  0.01 sys = 10.05 CPU) @ 557237.91/s (n=5598012)
+#                   Rate plat_f plat_a inline_c  pure  wrap direct_wrap affix direct_affix
+# plat_f         44803/s    --  -78%  -86%  -89%  -92%  -93%  -93%  -93%
+# plat_a        200057/s  347%    --  -37%  -53%  -64%  -68%  -68%  -70%
+# inline_c      318067/s  610%   59%    --  -25%  -43%  -49%  -49%  -52%
+# pure          425988/s  851%  113%   34%    --  -24%  -32%  -32%  -36%
+# wrap          557238/s 1144%  179%   75%   31%    --  -11%  -11%  -16%
+# direct_wrap   622782/s 1290%  211%   96%   46%   12%    --   -0%   -6%
+# affix         623302/s 1291%  212%   96%   46%   12%    0%    --   -6%
+# direct_affix  663070/s 1380%  231%  108%   56%   19%    6%    6%    --
