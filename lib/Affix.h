@@ -96,7 +96,6 @@ typedef struct {
     size_t c_arg_offset;      // Pre-calculated offset into the C arguments buffer.
 } Affix_Step_Data;
 
-
 typedef enum {
     OP_PUSH_BOOL,
     OP_PUSH_SINT8,
@@ -175,8 +174,7 @@ typedef struct {
     UV ref_count;           ///< Reference count. The library is closed only when this reaches 0.
 } LibRegistryEntry;
 
-
-// --- NEW ---: Struct for the Direct Marshalling (aka "bundle") backend.
+// Struct for the Direct Marshalling (aka "bundle") backend.
 /// @brief Represents a forward FFI call created with the high-performance direct marshalling API.
 struct Affix_Backend {
     infix_forward_t * infix;       ///< Handle to the infix trampoline and type info.
@@ -187,46 +185,46 @@ struct Affix_Backend {
     size_t num_args;               ///< Cached number of arguments.
 };
 
-// --- NEW ---: Trigger function for the new backend.
+// Trigger function for the new backend.
 extern void Affix_trigger_backend(pTHX_ CV *);
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //                          FUNCTION PROTOTYPES
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-// --- Main execution trigger ---
+// Main execution trigger
 extern void Affix_trigger(pTHX_ CV *);
 
-// --- Marshalling (Perl -> C) ---
+// Marshalling (Perl -> C)
 void sv2ptr(pTHX_ Affix * affix, SV * perl_sv, void * c_ptr, const infix_type * type);
 void push_struct(pTHX_ Affix * affix, const infix_type * type, SV * sv, void * p);
 void push_array(pTHX_ Affix * affix, const infix_type * type, SV * sv, void * p);
 void push_reverse_trampoline(pTHX_ Affix * affix, const infix_type * type, SV * sv, void * p);
 
-// --- Marshalling (C -> Perl) ---
+// Marshalling (C -> Perl)
 void ptr2sv(pTHX_ Affix * affix, void * c_ptr, SV * perl_sv, const infix_type * type);
 void _populate_hv_from_c_struct(pTHX_ Affix * affix, HV * hv, const infix_type * type, void * p);
 
-// --- Handler Resolution ---
+// Handler Resolution
 Affix_Step_Executor get_plan_step_executor(const infix_type * type);
 Affix_Pull get_pull_handler(const infix_type * type);
 Affix_Out_Param_Writer get_out_param_writer(const infix_type * type);
 
-// --- Pin (Pointer Object) Management ---
+// Pin (Pointer Object) Management
 void _pin_sv(pTHX_ SV * sv, const infix_type * type, void * pointer, bool managed);
 bool is_pin(pTHX_ SV * sv);
 Affix_Pin * _get_pin_from_sv(pTHX_ SV * sv);
 
-// --- Reverse FFI (Callback) ---
+// Reverse FFI (Callback)
 void _affix_callback_handler_entry(infix_context_t *, void *, void **);
 
-// --- Misc Internals & Helpers ---
+// Misc Internals & Helpers
 void _export_function(pTHX_ HV *, const char *, const char *);
 
-// --- XS Bootstrap ---
+// XS Bootstrap
 void boot_Affix(pTHX_ CV *);
 
-// --- Portable XS MACROS ---
+// Portable XS MACROS
 #ifdef newXS_flags
 #define newXSproto_portable(name, c_impl, file, proto) newXS_flags(name, c_impl, file, proto, 0)
 #else
@@ -237,7 +235,7 @@ void boot_Affix(pTHX_ CV *);
 #define export_function(package, what, tag) \
     _export_function(aTHX_ get_hv(form("%s::EXPORT_TAGS", package), GV_ADD), what, tag)
 
-// --- Debugging Macros ---
+// Debugging Macros
 #if DEBUG > 1
 #define PING warn("Ping at %s line %d", __FILE__, __LINE__);
 #else

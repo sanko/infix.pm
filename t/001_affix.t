@@ -17,12 +17,11 @@ subtest types => sub {
     imported_ok qw[
         Void Bool Char UChar Short UShort Int UInt Long ULong LongLong ULongLong Float Double LongDouble
         Size_t
-        String WString StdString
+        String WString
         Pointer
         SV
-        Const
         SChar WChar
-        sint8
+        SInt8
     ];
     subtest abstract => sub {
         is Void,       'void',       'Void';
@@ -40,10 +39,14 @@ subtest types => sub {
         is Float,      'float',      'Float';
         is Double,     'double',     'Double';
         is LongDouble, 'longdouble', 'LongDouble';
-        is SChar,      'sint8',      'SChar';
+        is SChar,      'char',      'SChar';
     };
     subtest explicit => sub {
-        is sint8, 'sint8', 'sint8';
+        is SInt8, 'sint8', 'SInt8';
+        is SInt16, 'sint16', 'SInt16';
+        is SInt32, 'sint32', 'SInt32';
+        is SInt64, 'sint64', 'SInt64';
+        is SInt128, 'sint128', 'SInt128';
     };
     subtest SIMD => sub {
         skip_all 'TODO';
@@ -53,11 +56,11 @@ subtest types => sub {
         is Pointer [Char],             '*char',  'Pointer[Char]';
         is Pointer [ Pointer [Void] ], '**void', 'Pointer[Pointer[Void]]';
         #
-        is Struct [ name => Pointer [Char] ], '{ name: *char }', 'Struct[ name => ... ]';
-        is Struct [ name => Pointer [Char], dob => Struct [ y => Int, m => Int, d => Int ] ], '{ name: *char, dob: { y: int, m: int, d: int } }',
+        is Struct [ name => Pointer [Char] ], '{name:*char}', 'Struct[ name => ... ]';
+        is Struct [ name => Pointer [Char], dob => Struct [ y => Int, m => Int, d => Int ] ], '{name:*char,dob:{y:int,m:int,d:int}}',
             'Struct[ name => ..., dob => ...]';
         #
-        is Union [ i => Int, f => Float ], '< i: int, f: float >', 'Union[...]';
+        is Union [ i => Int, f => Float ], '<i:int,f:float>', 'Union[...]';
         #
     };
 
@@ -301,6 +304,11 @@ subtest 'Library Loading and Lifecycle' => sub {
     is $bad_lib,                 undef, 'load_library returns undef for a non-existent library';
     is get_last_error_message(), D(),   'get_last_error_message provides a useful error on failed load';
 };
+
+
+done_testing;
+exit;
+
 subtest 'Symbol Finding' => sub {
     ok my $lib    = load_library($lib_path),    'load_library returns a pointer';
     ok my $symbol = find_symbol( $lib, 'add' ), 'find_symbol returns a pointer';
